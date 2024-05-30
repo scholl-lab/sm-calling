@@ -25,6 +25,6 @@ export SBATCH_DEFAULTS=" --output=slurm_logs/%x-%j.log"
 # Print the current date and time
 date
 # Execute the Snakemake script with the desired options
-srun snakemake -s gatk_filter_mutect_calls.smk --use-conda --profile=cubi-v1 -j100
+srun snakemake -s snakemake/gatk_filter_mutect_calls.smk --use-conda --profile=cubi-v1 -j100
 # Print the current date and time after completion
 date
