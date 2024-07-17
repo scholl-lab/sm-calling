@@ -24,5 +24,5 @@ export SBATCH_DEFAULTS=" --output=slurm_logs/%x-%j.log"
 
 date
 # Execute the Snakemake script with the desired options
-srun snakemake -s snakemake/merge_mutect2_calls.smk --use-conda --profile=cubi-v1 -j100
+srun snakemake -s snakemake/merge_mutect2_calls.smk --use-conda --profile=cubi-v1 -j150
 date

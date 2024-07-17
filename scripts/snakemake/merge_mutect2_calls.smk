@@ -13,6 +13,7 @@ SCRATCH_DIR = os.environ.get('TMPDIR')
 
 # Helper function to return memory based on the number of threads
 def get_mem_from_threads(wildcards, threads):
+    """Calculate the amount of memory to allocate based on the number of threads."""
     return threads * 4400
 # ----------------------------------------------------------------------------------- #
 
@@ -27,17 +28,18 @@ metadata_dict = {}
 with open('calling_metadata.tsv', 'r') as f:
     reader = csv.DictReader(f, delimiter='\t')
     for row in reader:
+        # Combine individual and analysis to create a unique key for each entry
         analysis_key = f"{row['individual1']}_{row['analysis']}"
         metadata_dict[analysis_key] = row
 
-# Define output directories for various results using functools
+# Define output directories for various results using functools.partial
 prefix_results = functools.partial(os.path.join, OUTPUT_DIR)
 VARIANT_DIR = prefix_results('variant_calls')
 MERGED_DIR = prefix_results('variant_merge')
 LOG_DIR = prefix_results('logs')
 
 # List of chromosomes for processing
-chromosomes = [f"chr{i}" for i in range(1, 23)] + ["chrX", "chrY"]
+chromosomes = [f"chr{i}" for i in range(1, 23)] + ["chrX", "chrY", "chrM"]
 # ----------------------------------------------------------------------------------- #
 
 # ----------------------------------------------------------------------------------- #
@@ -49,24 +51,23 @@ rule all:
     input:
         expand(
             [
-                f"{MERGED_DIR}/{{individual1}}_{{analysis}}.vcf.gz",
-                f"{MERGED_DIR}/{{individual1}}_{{analysis}}.vcf.gz.tbi",
-                f"{MERGED_DIR}/{{individual1}}_{{analysis}}.vcf.gz.stats",
-                f"{MERGED_DIR}/{{individual1}}_{{analysis}}_read-orientation-model.tar.gz"
+                f"{MERGED_DIR}/{{analysis_key}}.vcf.gz",
+                f"{MERGED_DIR}/{{analysis_key}}.vcf.gz.tbi",
+                f"{MERGED_DIR}/{{analysis_key}}.vcf.gz.stats",
+                f"{MERGED_DIR}/{{analysis_key}}_read-orientation-model.tar.gz"
             ],
-            individual1=[row['individual1'] for row in metadata_dict.values()], 
-            analysis=[row['analysis'] for row in metadata_dict.values()]
+            analysis_key=metadata_dict.keys()
         )
 
 # Rule to merge scattered VCF files across chromosomes and create a VCF index
 rule merge_vcfs:
     input:
-        lambda wildcards: [f"{VARIANT_DIR}/{wildcards.individual1}_{wildcards.analysis}_{chrom}.vcf.gz" for chrom in chromosomes]
+        lambda wildcards: [f"{VARIANT_DIR}/{wildcards.analysis_key}_{chrom}.vcf.gz" for chrom in chromosomes]
     output:
-        vcf=f"{MERGED_DIR}/{{individual1}}_{{analysis}}.vcf.gz",
-        index=f"{MERGED_DIR}/{{individual1}}_{{analysis}}.vcf.gz.tbi"
+        vcf=f"{MERGED_DIR}/{{analysis_key}}.vcf.gz",
+        index=f"{MERGED_DIR}/{{analysis_key}}.vcf.gz.tbi"
     params:
-        input_files = lambda wildcards: ' '.join(['-I ' + item for item in [f"{VARIANT_DIR}/{wildcards.individual1}_{wildcards.analysis}_{chrom}.vcf.gz" for chrom in chromosomes]])
+        input_files = lambda wildcards: ' '.join(['-I ' + item for item in [f"{VARIANT_DIR}/{wildcards.analysis_key}_{chrom}.vcf.gz" for chrom in chromosomes]])
     threads: 4
     resources:
         mem_mb = get_mem_from_threads,
@@ -75,7 +76,7 @@ rule merge_vcfs:
     conda:
         "gatk"
     log:
-        f"{LOG_DIR}/{{individual1}}_{{analysis}}.merge_vcfs.log"
+        f"{LOG_DIR}/{{analysis_key}}.merge_vcfs.log"
     shell:
         """
         gatk --java-options '-Xms4000m -Xmx{resources.mem_mb}m -Djava.io.tmpdir={resources.tmpdir}' GatherVcfs \
@@ -86,15 +87,14 @@ rule merge_vcfs:
         tabix -p vcf {output.vcf}
         """
 
-
 # Rule to merge stats files corresponding to VCFs
 rule merge_stats:
     input:
-        lambda wildcards: [f"{VARIANT_DIR}/{wildcards.individual1}_{wildcards.analysis}_{chrom}.vcf.gz.stats" for chrom in chromosomes]
+        lambda wildcards: [f"{VARIANT_DIR}/{wildcards.analysis_key}_{chrom}.vcf.gz.stats" for chrom in chromosomes]
     output:
-        f"{MERGED_DIR}/{{individual1}}_{{analysis}}.vcf.gz.stats"
+        f"{MERGED_DIR}/{{analysis_key}}.vcf.gz.stats"
     params:
-        input_files = lambda wildcards: ' '.join(['-stats ' + item for item in [f"{VARIANT_DIR}/{wildcards.individual1}_{wildcards.analysis}_{chrom}.vcf.gz.stats" for chrom in chromosomes]])
+        input_files = lambda wildcards: ' '.join(['-stats ' + item for item in [f"{VARIANT_DIR}/{wildcards.analysis_key}_{chrom}.vcf.gz.stats" for chrom in chromosomes]])
     threads: 4
     resources:
         mem_mb = get_mem_from_threads,
@@ -103,7 +103,7 @@ rule merge_stats:
     conda:
         "gatk"
     log:
-        f"{LOG_DIR}/{{individual1}}_{{analysis}}.merge_stats.log"
+        f"{LOG_DIR}/{{analysis_key}}.merge_stats.log"
     shell:
         """
         gatk --java-options '-Xms4000m -Xmx{resources.mem_mb}m -Djava.io.tmpdir={resources.tmpdir}' MergeMutectStats \
@@ -114,11 +114,11 @@ rule merge_stats:
 # Rule to merge f1r2 orientation files across chromosomes
 rule merge_f1r2:
     input:
-        lambda wildcards: [f"{VARIANT_DIR}/{wildcards.individual1}_{wildcards.analysis}_{chrom}.f1r2.tar.gz" for chrom in chromosomes]
+        lambda wildcards: [f"{VARIANT_DIR}/{wildcards.analysis_key}_{chrom}.f1r2.tar.gz" for chrom in chromosomes]
     output:
-        f"{MERGED_DIR}/{{individual1}}_{{analysis}}_read-orientation-model.tar.gz"
+        f"{MERGED_DIR}/{{analysis_key}}_read-orientation-model.tar.gz"
     params:
-        input_files = lambda wildcards: ' '.join(['-I ' + item for item in [f"{VARIANT_DIR}/{wildcards.individual1}_{wildcards.analysis}_{chrom}.f1r2.tar.gz" for chrom in chromosomes]])
+        input_files = lambda wildcards: ' '.join(['-I ' + item for item in [f"{VARIANT_DIR}/{wildcards.analysis_key}_{chrom}.f1r2.tar.gz" for chrom in chromosomes]])
     threads: 4
     resources:
         mem_mb = get_mem_from_threads,
@@ -127,7 +127,7 @@ rule merge_f1r2:
     conda:
         "gatk"
     log:
-        f"{LOG_DIR}/{{individual1}}_{{analysis}}.merge_f1r2.log"
+        f"{LOG_DIR}/{{analysis_key}}.merge_f1r2.log"
     shell:
         """
         gatk --java-options '-Xms4000m -Xmx{resources.mem_mb}m -Djava.io.tmpdir={resources.tmpdir}' LearnReadOrientationModel \
