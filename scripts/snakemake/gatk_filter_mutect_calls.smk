@@ -39,7 +39,7 @@ LOG_DIR = prefix_results('logs')
 rule all:
     input:
         expand(
-            f"{FILTERED_DIR}/{{individual1}}_{{analysis}}.filtered.vcf.gz",
+            os.path.join(FILTERED_DIR, "{individual1}_{analysis}.filtered.vcf.gz"),
             individual1=[row['individual1'] for row in metadata_dict.values()],
             analysis=[row['analysis'] for row in metadata_dict.values()]
         )
@@ -47,13 +47,13 @@ rule all:
 # Rule to filter merged raw MuTect2 calls
 rule filter_mutect_calls:
     input:
-        vcf = lambda wildcards: f"{OUTPUT_DIR}/variant_merge/{wildcards.individual1}_{wildcards.analysis}.vcf.gz",
-        stats = lambda wildcards: f"{OUTPUT_DIR}/variant_merge/{wildcards.individual1}_{wildcards.analysis}.vcf.gz.stats",
-        contamination_table = lambda wildcards: f"{OUTPUT_DIR}/calculate_contamination/{wildcards.individual1}_{wildcards.analysis}.contamination.table",
-        tumor_segmentation = lambda wildcards: f"{OUTPUT_DIR}/calculate_contamination/{wildcards.individual1}_{wildcards.analysis}.segments.table",
-        ob_priors = lambda wildcards: f"{OUTPUT_DIR}/variant_merge/{wildcards.individual1}_{wildcards.analysis}_read-orientation-model.tar.gz"
+        vcf = lambda wildcards: os.path.join(OUTPUT_DIR, 'variant_merge', f"{wildcards.individual1}_{wildcards.analysis}.vcf.gz"),
+        stats = lambda wildcards: os.path.join(OUTPUT_DIR, 'variant_merge', f"{wildcards.individual1}_{wildcards.analysis}.vcf.gz.stats"),
+        contamination_table = lambda wildcards: os.path.join(OUTPUT_DIR, 'calculate_contamination', f"{wildcards.individual1}_{wildcards.analysis}.contamination.table"),
+        tumor_segmentation = lambda wildcards: os.path.join(OUTPUT_DIR, 'calculate_contamination', f"{wildcards.individual1}_{wildcards.analysis}.segments.table"),
+        ob_priors = lambda wildcards: os.path.join(OUTPUT_DIR, 'variant_merge', f"{wildcards.individual1}_{wildcards.analysis}_read-orientation-model.tar.gz")
     output:
-        filtered_vcf = f"{FILTERED_DIR}/{{individual1}}_{{analysis}}.filtered.vcf.gz"
+        filtered_vcf = os.path.join(FILTERED_DIR, "{individual1}_{analysis}.filtered.vcf.gz")
     threads: 4
     resources:
         mem_mb = get_mem_from_threads,
@@ -62,7 +62,7 @@ rule filter_mutect_calls:
     conda:
         "gatk"
     log:
-        f"{LOG_DIR}/{{individual1}}_{{analysis}}.filter_mutect_calls.log"
+        os.path.join(LOG_DIR, "{individual1}_{analysis}.filter_mutect_calls.log")
     shell:
         """
         gatk --java-options '-Xms4000m -Xmx{resources.mem_mb}m -Djava.io.tmpdir={resources.tmpdir}' FilterMutectCalls \
