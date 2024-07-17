@@ -11,9 +11,11 @@ SCRATCH_DIR = os.environ.get('TMPDIR')
 
 # Helper function to return memory based on the number of threads
 def get_mem_from_threads(wildcards, threads):
+    """Calculate the amount of memory to allocate based on the number of threads."""
     return threads * 4400
 # ----------------------------------------------------------------------------------- #
 
+# ----------------------------------------------------------------------------------- #
 # Extract user-defined input and output directories and reference (unpacked) file from the configuration file
 INPUT_DIR = config["final_bam_folder"]
 FINAL_BAM_FILE_EXTENSION = config.get("final_bam_file_extension", ".bam")
@@ -29,6 +31,7 @@ with open('calling_metadata.tsv', 'r') as f:
         metadata_dict[analysis_key] = row
 # ----------------------------------------------------------------------------------- #
 
+# ----------------------------------------------------------------------------------- #
 # Define result directories using functools.partial to join paths with the output folder
 prefix_results = functools.partial(os.path.join, config['output_folder'])
 VARIANT_DIR = prefix_results('variant_calls')
@@ -39,15 +42,19 @@ LOG_DIR = prefix_results('logs')
 all_bams = set(row['bam1_file_basename'] for row in metadata_dict.values()).union(
            set(row['bam2_file_basename'] for row in metadata_dict.values()))
 
+# Ensure log directory exists
+os.makedirs(LOG_DIR, exist_ok=True)
 # ----------------------------------------------------------------------------------- #
+
+# ----------------------------------------------------------------------------------- #
+# Snakemake Rules
 
 # Main rule to define the expected final outputs
 rule all:
     input:
         expand(
-            f"{CONTAMINATION_DIR}/{{individual1}}_{{analysis}}.contamination.table",
-            individual1=[row['individual1'] for row in metadata_dict.values()],
-            analysis=[row['analysis'] for row in metadata_dict.values()]
+            f"{CONTAMINATION_DIR}/{{analysis_key}}.contamination.table",
+            analysis_key=metadata_dict.keys()
         )
 
 # GetPileupSummaries rule
@@ -80,11 +87,13 @@ rule get_pileup_summaries:
 # CalculateContamination rule
 rule calculate_contamination:
     input:
-        tumor_pileup = lambda wildcards: os.path.join(CONTAMINATION_DIR, metadata_dict[f"{wildcards.individual1}_{wildcards.analysis}"]['bam1_file_basename'] + ".getpileupsummaries.table"),
-        normal_pileup = lambda wildcards: os.path.join(CONTAMINATION_DIR, metadata_dict[f"{wildcards.individual1}_{wildcards.analysis}"]['bam2_file_basename'] + ".getpileupsummaries.table")
+        tumor_pileup = lambda wildcards: os.path.join(CONTAMINATION_DIR, metadata_dict[wildcards.analysis_key]['bam1_file_basename'] + ".getpileupsummaries.table"),
+        normal_pileup = lambda wildcards: os.path.join(CONTAMINATION_DIR, metadata_dict[wildcards.analysis_key]['bam2_file_basename'] + ".getpileupsummaries.table") if metadata_dict[wildcards.analysis_key].get('bam2_file_basename') else []
     output:
-        contamination_table = os.path.join(CONTAMINATION_DIR, "{individual1}_{analysis}.contamination.table"),
-        segments_table = os.path.join(CONTAMINATION_DIR, "{individual1}_{analysis}.segments.table")
+        contamination_table = os.path.join(CONTAMINATION_DIR, "{analysis_key}.contamination.table"),
+        segments_table = os.path.join(CONTAMINATION_DIR, "{analysis_key}.segments.table")
+    params:
+        matched_option = lambda wildcards: f"--matched {os.path.join(CONTAMINATION_DIR, metadata_dict[wildcards.analysis_key]['bam2_file_basename'] + '.getpileupsummaries.table')}" if metadata_dict[wildcards.analysis_key].get('bam2_file_basename') else ''
     threads: 4  # Adjust as necessary
     resources:
         mem_mb = get_mem_from_threads,
@@ -93,14 +102,13 @@ rule calculate_contamination:
     conda:
         "gatk"
     log:
-        os.path.join(LOG_DIR, "{individual1}_{analysis}.calculatecontamination.log")
+        os.path.join(LOG_DIR, "{analysis_key}.calculatecontamination.log")
     shell:
         """
         gatk --java-options '-Xms4000m -Xmx{resources.mem_mb}m -Djava.io.tmpdir={resources.tmpdir}' CalculateContamination \
             -I {input.tumor_pileup} \
-            -matched {input.normal_pileup} \
+            {params.matched_option} \
             --tumor-segmentation {output.segments_table} \
             -O {output.contamination_table} 2> {log}
         """
-
 # ----------------------------------------------------------------------------------- #
