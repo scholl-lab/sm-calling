@@ -1,12 +1,13 @@
-# MuTect2 Variant Calling Pipeline
+# SM-CALLING
 
-This pipeline is designed to perform variant calling using GATK's MuTect2. It is implemented using Snakemake and allows for a high degree of customization through a configuration file.
+This repository contains a set of Snakemake workflows designed for variant calling using GATK's MuTect2. The pipeline supports preprocessing steps such as merging VCF files, calculating contamination, and filtering variant calls. It is designed to be flexible and customizable through configuration files.
 
 ## Requirements
 
 - Snakemake
 - Conda
 - GATK (installed through Conda in the pipeline)
+- Bcftools (for VCF file operations)
 
 ## Installation
 
@@ -33,41 +34,89 @@ This file contains the settings for the pipeline. Here are the details of the se
 
 This file contains the metadata for the analyses to be run. It should contain the following columns:
 
+- `individual1`: The identifier for the first individual.
+- `individual2`: (Optional) The identifier for the second individual. Leave empty for tumor-only analyses.
+- `analysis`: The type of analysis to be performed (e.g., "To" for tumor-only).
 - `sample1`: The name of the first sample (tumor sample).
 - `sample2`: (Optional) The name of the second sample (normal sample). Leave empty for tumor-only analyses.
 - `bam1_file_basename`: The basename of the BAM file for the first sample.
 - `bam2_file_basename`: (Optional) The basename of the BAM file for the second sample. Leave empty for tumor-only analyses.
-- `individual1`: The identifier for the first individual.
-- `individual2`: (Optional) The identifier for the second individual. Leave empty for tumor-only analyses.
-- `analysis`: The type of analysis to be performed (e.g., "To" for tumor-only).
 
 ## Running the Pipeline
 
-To run the pipeline, use the following command:
+The pipeline is executed in a specific order using the provided shell scripts. Below is the order of execution along with a brief description of each step:
 
-```sh
-sbatch run_mutect2_calling.sh
-```
+1. **MuTect2 Calling** (`mutect2_calling.smk`):
+    - This script performs variant calling using GATK's MuTect2 on the provided BAM files.
+    - To run this step, use the following command:
+      ```sh
+      sbatch run_mutect2_calling.sh
+      ```
 
-The run_mutect2_calling.sh shell script contains the Snakemake command to run the workflow with the appropriate settings and resource allocations.
-You may need to edit this script to specify the number of cores and other resources based on your system's configuration.
+2. **Merge MuTect2 Calls** (`merge_mutect2_calls.smk`):
+    - This script merges the VCF files generated in the previous step using GATK's GatherVcfs, and merges stats files using GATK's MergeMutectStats. It also processes f1r2 files for LearnReadOrientationModel.
+    - To run this step, use the following command:
+      ```sh
+      sbatch run_merge_mutect2_calls.sh
+      ```
+
+3. **Calculate Contamination** (`gatk_calculate_contamination.smk`):
+    - This script calculates the contamination in the sample using GATK's CalculateContamination.
+    - To run this step, use the following command:
+      ```sh
+      sbatch run_gatk_calculate_contamination.sh
+      ```
+
+4. **Filter MuTect Calls** (`gatk_filter_mutect_calls.smk`):
+    - This script filters the merged VCF files to remove false positives using GATK's FilterMutectCalls.
+    - To run this step, use the following command:
+      ```sh
+      sbatch run_gatk_filter_mutect_calls.sh
+      ```
 
 ## Output
-The pipeline produces the following outputs in the output_folder specified in the config.yaml:
 
-- `variant_calls`: A folder containing the VCF files with the variant calls.
-- `logs`: A folder containing the log files for the MuTect2 runs.
+The pipeline produces the following outputs in the `output_folder` specified in the `config.yaml`:
+
+- `variant_calls`: A folder containing the initial VCF files with the variant calls.
+- `variant_merge`: A folder containing merged VCF files, stats files, and orientation model files.
+- `calculate_contamination`: A folder containing contamination tables and segment tables.
+- `filtered_vcfs`: A folder containing the final filtered VCF files.
+- `logs`: A folder containing the log files for each step of the pipeline.
 
 Each VCF file is named with the format `<individual1>_<analysis>_<chromosome>.vcf.gz`.
 
-# TODO
-- [x] script to merge VCF files, f1r2 files, and stats files
-    - use GatherVcfs (Picard) to merge VCF files
-    - use gatk MergeMutectStats to merge stats files
-    - the f1r2 files are not merged but are all used as input for LearnReadOrientationModel
-- [x] script for LearnReadOrientationModel
-    - this should be part of the merge script
-- [ ] script for FilterMutectCalls
-- [x] script for CalculateContamination (plus GetPileupSummaries)
+## Pipeline Diagram
 
---> see: https://gatk.broadinstitute.org/hc/en-us/articles/360035531132--How-to-Call-somatic-mutations-using-GATK4-Mutect2
+```mermaid
+graph TD
+    A[mutect2_calling.smk] --> B[merge_mutect2_calls.smk]
+    B --> C[gatk_calculate_contamination.smk]
+    C --> D[gatk_filter_mutect_calls.smk]
+
+    subgraph Inputs
+        I1[final BAM files]
+        I2[config.yaml]
+        I3[calling_metadata.tsv]
+    end
+
+    subgraph Outputs
+        O1[variant_calls]
+        O2[variant_merge]
+        O3[calculate_contamination]
+        O4[filtered_vcfs]
+        O5[logs]
+    end
+
+    I1 --> A
+    I2 --> A
+    I3 --> A
+    D --> O1
+    D --> O2
+    D --> O3
+    D --> O4
+    D --> O5
+```
+
+## License
+This project is licensed under the MIT License. See the LICENSE file for more details.
