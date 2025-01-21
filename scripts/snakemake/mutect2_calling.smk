@@ -103,6 +103,8 @@ rule call_variants:
             $normal_sample_option \
             --germline-resource {params.af_only_gnomad} \
             --panel-of-normals {params.panel_of_normals} \
+            --genotype-germline-sites true \
+            --genotype-pon-sites true \
             --f1r2-tar-gz {VARIANT_DIR}/{params.individual}_{params.analysis}_{wildcards.chromosome}.f1r2.tar.gz \
             $scatter_option \
             -O {output.variant_file} 2> {log.mutect2}
