@@ -9,10 +9,10 @@ scatter_count: 400                           # For interval scattering (SplitInt
 freebayes_params:                           # Additional FreeBayes parameters
   --min-coverage: "10"
 
-results_dir: "results/VCFs/freebayes_germline_joint"
-logs_dir: "results/VCFs/freebayes_germline_joint/logs"
+results_dir: "results/exomes/VCFs/freebayes_germline_joint"
+logs_dir: "results/exomes/VCFs/freebayes_germline_joint/logs"
 intervals_dir: "analysis/intervals"
-final_merged_vcf: "results/VCFs/freebayes_germline_joint/final_merged.vcf.gz"
+final_merged_vcf: "results/exomes/VCFs/freebayes_germline_joint/final_merged.vcf.gz"
 
 # conda environment for FreeBayes
 freebayes_env: "freebayes"

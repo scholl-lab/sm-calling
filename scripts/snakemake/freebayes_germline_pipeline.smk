@@ -27,6 +27,12 @@ os.makedirs(LOGS_DIR, exist_ok=True)
 os.makedirs(INTERVALS_DIR, exist_ok=True)
 
 ##############################################################################
+# (A) Additional subfolder for BAM list files
+##############################################################################
+BAM_LIST_DIR = os.path.join(RESULTS_DIR, "bam_lists")
+os.makedirs(BAM_LIST_DIR, exist_ok=True)
+
+##############################################################################
 # 2) Read the BAM list file so Snakemake knows the inputs
 ##############################################################################
 with open(BAM_LIST_FILE, "r") as f:
@@ -48,25 +54,15 @@ FREEBAYES_CMD_PARAMS = freebayes_param_str(FREEBAYES_PARAMS)
 
 ##############################################################################
 # 4) Define naming scheme for GATK's scattered intervals
-#
-# By default, GATK SplitIntervals can produce "0000-scattered.interval_list",
-# "0001-scattered.interval_list", etc. We'll expect exactly that pattern.
 ##############################################################################
 def scattered_interval_name(i):
-    """
-    Return e.g. "0000-scattered.interval_list" for i=0,
-    "0001-scattered.interval_list" for i=1, etc.
-    """
+    """Return e.g. '0000-scattered.interval_list' for i=0."""
     return f"{i:04d}-scattered.interval_list"
 
 def scattered_bed_name(i):
-    """
-    Return the corresponding bed name, e.g. "0000-scattered.bed".
-    """
+    """Return the corresponding bed name, e.g. '0000-scattered.bed'."""
     return f"{i:04d}-scattered.bed"
 
-
-# Create Python lists of expected scattered intervals & BED files:
 SCATTERED_INTERVAL_LISTS = [
     os.path.join(INTERVALS_DIR, scattered_interval_name(i))
     for i in range(SCATTER_COUNT)
@@ -76,14 +72,12 @@ SCATTERED_BED_FILES = [
     for i in range(SCATTER_COUNT)
 ]
 
-
 ##############################################################################
 # 5) The final "all" rule - produce one merged VCF
 ##############################################################################
 rule all:
     input:
         FINAL_MERGED_VCF
-
 
 ##############################################################################
 # 6) Scatter intervals by Ns (if SCATTER_MODE == 'interval')
@@ -116,7 +110,6 @@ rule scatter_intervals_by_ns:
         fi
         """
 
-
 ##############################################################################
 # 7) Split intervals => produce "0000-scattered.interval_list" etc. + BED
 ##############################################################################
@@ -124,9 +117,6 @@ rule split_intervals:
     """
     Split intervals into SCATTER_COUNT parts using GATK SplitIntervals,
     then convert each .interval_list => .bed
-
-    GATK by default names them: 0000-scattered.interval_list, 0001-scattered.interval_list, etc.
-    We rely on that pattern, so we also specify --output-prefix "" below.
     """
     input:
         intervals_list=os.path.join(INTERVALS_DIR, "scattered.interval_list"),
@@ -145,7 +135,6 @@ rule split_intervals:
         if [ "{SCATTER_MODE}" = "interval" ]; then
             set -e
             echo "Starting SplitIntervals" > {log}
-            # Force GATK to produce exactly "0000-scattered.interval_list", etc.
             gatk SplitIntervals \
                 -R {input.reference} \
                 -L {input.intervals_list} \
@@ -161,7 +150,6 @@ rule split_intervals:
                     | cut -f1-3 \
                     > "$bed"
             done
-
         else
             # Not scattering => create empty placeholders
             for i in $(seq 0 $(( {{params.scatter_count}} - 1 ))); do
@@ -171,34 +159,33 @@ rule split_intervals:
         fi
         """
 
-
 ##############################################################################
-# 8) Determine scatter units for subsequent rules
-#    e.g. "0000-scattered", "0001-scattered", ...
+# 8) Decide scatter units (chromosome or interval)
 ##############################################################################
 def get_scatter_units():
     if SCATTER_MODE == "chromosome":
         return CHROMS
     elif SCATTER_MODE == "interval":
-        # Each scattered file is "####-scattered.interval_list"
-        # We'll use "####-scattered" as the scatter_id
         return [f"{i:04d}-scattered" for i in range(SCATTER_COUNT)]
     else:
         return []
 
 SCATTER_UNITS = get_scatter_units()
 
-
 ##############################################################################
 # 9) FreeBayes scatter rule
 ##############################################################################
 rule freebayes_scatter:
+    """
+    Run FreeBayes on each scatter chunk (chromosome or interval),
+    compress the VCF with bgzip, then index it with tabix.
+    """
     input:
         reference=REFERENCE_GENOME,
         bam_files=BAM_FILES,
         bed_file=lambda wc: os.path.join(INTERVALS_DIR, f"{wc.scatter_id}.bed")
     output:
-        vcf = f"{RESULTS_DIR}/freebayes_{{scatter_id}}.vcf",
+        vcf = f"{RESULTS_DIR}/freebayes_{{scatter_id}}.vcf.gz",
         log = f"{LOGS_DIR}/freebayes_{{scatter_id}}.log"
     threads: 2
     resources:
@@ -217,25 +204,29 @@ rule freebayes_scatter:
             REGION_ARG="--targets {input.bed_file}"
         fi
 
-        BAM_LIST_TXT="{RESULTS_DIR}/bam_list_{wildcards.scatter_id}.txt"
+        # (A) Store the BAM list in a subfolder
+        BAM_LIST_TXT="{BAM_LIST_DIR}/bam_list_{wildcards.scatter_id}.txt"
         rm -f "$BAM_LIST_TXT"
         for b in {input.bam_files}; do
             echo "$b" >> "$BAM_LIST_TXT"
         done
 
+        # Run FreeBayes, pipe to bgzip, then index with tabix
         freebayes \
             -f {input.reference} \
             $REGION_ARG \
             -L "$BAM_LIST_TXT" \
             {FREEBAYES_CMD_PARAMS} \
-            > {output.vcf} 2> {output.log}
+            2> {output.log} \
+        | bgzip -c > {output.vcf}
+
+        tabix -p vcf {output.vcf}
 
         echo "Finished FreeBayes on {wildcards.scatter_id}" >&2
         """
 
-
 ##############################################################################
-# 10) Merge scattered VCFs into one final VCF
+# 10) Merge scattered .vcf.gz files => final merged VCF
 ##############################################################################
 rule merge_vcfs:
     """
@@ -243,11 +234,11 @@ rule merge_vcfs:
     """
     input:
         expand(
-            os.path.join(RESULTS_DIR, "freebayes_{scatter_id}.vcf"),
+            os.path.join(RESULTS_DIR, "freebayes_{scatter_id}.vcf.gz"),
             scatter_id=SCATTER_UNITS
         )
     output:
-        merged_vcf=FINAL_MERGED_VCF
+        merged_vcf = FINAL_MERGED_VCF
     log:
         os.path.join(LOGS_DIR, "merge_freebayes.log")
     shell:
