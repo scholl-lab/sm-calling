@@ -226,7 +226,7 @@ rule freebayes_scatter:
         """
 
 ##############################################################################
-# 10) Merge scattered .vcf.gz files => final merged VCF
+# 10) Merge and normalize scattered .vcf.gz files => final merged VCF
 ##############################################################################
 rule merge_vcfs:
     """
@@ -245,7 +245,25 @@ rule merge_vcfs:
         r"""
         set -e
         echo "Merging scattered FreeBayes VCFs" > {log}
-        bcftools concat -O z -o {output.merged_vcf} {input} &>> {log}
-        tabix -p vcf {output.merged_vcf}
+
+        # 1) Concatenate with naive mode (-n),
+        # 2) normalize with additional arguments,
+        # 3) fill tags,
+        # 4) write final compressed VCF
+        bcftools concat \
+            -n \
+            -o - \
+            -O z \
+            {input} 2>> {log} \
+        | bcftools norm \
+            -m-any --force -a --atom-overlaps . \
+            -f {REFERENCE_GENOME} \
+            - 2>> {log} \
+        | bcftools +fill-tags -- \
+            -O z \
+            -o {output.merged_vcf} \
+            -W tbi \
+            2>> {log}
+
         echo "Done merging final VCF." >> {log}
         """
