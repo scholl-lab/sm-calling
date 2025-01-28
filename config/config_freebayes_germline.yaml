@@ -7,7 +7,10 @@ chromosomes: ["1","2","3","4","5","6","7","8","9","10","11","12","13","14","15",
 scatter_count: 400                           # For interval scattering (SplitIntervals)
 
 freebayes_params:                           # Additional FreeBayes parameters
-  --min-coverage: "10"
+  --min-coverage: "20"
+  --limit-coverage: "500"
+  --use-best-n-alleles: "4"
+  --standard-filters: "true"
 
 results_dir: "results/exomes/VCFs/freebayes_germline_joint"
 logs_dir: "results/exomes/VCFs/freebayes_germline_joint/logs"

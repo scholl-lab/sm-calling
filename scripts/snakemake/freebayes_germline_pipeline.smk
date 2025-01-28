@@ -1,5 +1,5 @@
 ##############################################################################
-# freebayes_pipeline.smk
+# freebayes_germline_pipeline.smk
 ##############################################################################
 import os
 
@@ -42,12 +42,22 @@ print(f"DEBUG: Found {len(BAM_FILES)} BAM(s) in {BAM_LIST_FILE}")
 
 ##############################################################################
 # 3) Function to convert freebayes_params dict to a command-line string
+#    If the value is "true", treat it as a flag-only (no value appended).
 ##############################################################################
 def freebayes_param_str(params_dict):
-    """Construct a command string from the dictionary in config."""
+    """
+    Convert a dictionary of FreeBayes params to a command-line string.
+    If the config says e.g. --standard-filters: "true", output just "--standard-filters".
+    Otherwise, output "--key value".
+    """
     parts = []
-    for k, v in params_dict.items():
-        parts.append(f"{k} {v}")
+    for key, val in params_dict.items():
+        if val.lower() == "true":
+            # Flag-only parameter
+            parts.append(key)
+        else:
+            # Normal key-value parameter
+            parts.append(f"{key} {val}")
     return " ".join(parts)
 
 FREEBAYES_CMD_PARAMS = freebayes_param_str(FREEBAYES_PARAMS)
@@ -76,6 +86,9 @@ SCATTERED_BED_FILES = [
 # 5) The final "all" rule - produce one merged VCF
 ##############################################################################
 rule all:
+    """
+    Final pipeline target: merged VCF from scattered FreeBayes calls.
+    """
     input:
         FINAL_MERGED_VCF
 
