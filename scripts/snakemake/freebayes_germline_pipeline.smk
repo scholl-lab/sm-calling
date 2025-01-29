@@ -53,10 +53,8 @@ def freebayes_param_str(params_dict):
     parts = []
     for key, val in params_dict.items():
         if val.lower() == "true":
-            # Flag-only parameter
             parts.append(key)
         else:
-            # Normal key-value parameter
             parts.append(f"{key} {val}")
     return " ".join(parts)
 
@@ -186,6 +184,17 @@ def get_scatter_units():
 SCATTER_UNITS = get_scatter_units()
 
 ##############################################################################
+# 9) Exponential memory usage for freebayes_scatter
+##############################################################################
+def exponential_mem_mb(wildcards, attempt):
+    """
+    For each retry attempt, double the memory.
+    Start at 16 GB (16384 MB) => next attempt 32 GB => then 64 GB
+    """
+    base_mem = 16384  # 16 GB in MB
+    return base_mem * (2 ** (attempt - 1))
+
+##############################################################################
 # 9) FreeBayes scatter rule
 ##############################################################################
 rule freebayes_scatter:
@@ -202,7 +211,7 @@ rule freebayes_scatter:
         log = f"{LOGS_DIR}/freebayes_{{scatter_id}}.log"
     threads: 2
     resources:
-        mem_mb = 16384
+        mem_mb = exponential_mem_mb
     conda:
         FREEBAYES_ENV
     shell:
