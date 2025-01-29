@@ -264,6 +264,9 @@ rule merge_vcfs:
         )
     output:
         merged_vcf=FINAL_MERGED_VCF
+    threads: 12
+    resources:
+        mem_mb = 16384
     log:
         os.path.join(LOGS_DIR, "merge_freebayes.log")
     conda:
@@ -280,14 +283,17 @@ rule merge_vcfs:
         bcftools concat \
             -n \
             -O z \
+            -- threads 4 \
             {input} 2>> {log} \
         | bcftools norm \
             -m-any --force -a --atom-overlaps . \
             -f {REFERENCE_GENOME} \
+            --threads 4 \
             - 2>> {log} \
         | bcftools +fill-tags \
             -O z \
             -o {output.merged_vcf} \
+            --threads 4 \
             -W=tbi - -- \
             2>> {log}
 
