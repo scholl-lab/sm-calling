@@ -36,7 +36,7 @@ common_biallelic_gnomad: "analysis/GATK_resource_bundle/af-only-gnomad.hg38.comm
 final_bam_file_extension: ".merged.dedup.bqsr.bam"
 
 # Scatter mode can be: "chromosome", "interval", or "none"
-scatter_mode: "interval"
+scatter_mode: "chromosome"
 
 # Number of intervals if scatter_mode == "interval"
 scatter_count: 400

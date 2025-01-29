@@ -2,28 +2,14 @@
 # mutect2_pipeline.smk
 ##############################################################################
 import os
-import functools
 import csv
-import yaml
 
 ##############################################################################
 # 1) Load the config file
 ##############################################################################
-configfile: "config.yaml"
+configfile: "config_mutect2.yaml"
 
-# We'll assume your config.yaml has these top-level keys (edit if needed):
-#   final_bam_folder
-#   output_folder
-#   reference_unpacked
-#   panel_of_normals
-#   af_only_gnomad
-#   common_biallelic_gnomad
-#   final_bam_file_extension
-#   mutect_scatter_by_chromosome
-#   log_dir_sub
-#   metadata_file
-
-# Extract user-defined paths and references
+# Extract user-defined paths and references from config
 FINAL_BAM_FOLDER         = config["final_bam_folder"]
 OUTPUT_FOLDER            = config["output_folder"]
 REFERENCE_UNPACKED       = config["reference_unpacked"]
@@ -31,12 +17,17 @@ PANEL_OF_NORMALS         = config["panel_of_normals"]
 AF_ONLY_GNOMAD           = config["af_only_gnomad"]
 COMMON_BIALLELIC_GNOMAD  = config["common_biallelic_gnomad"]
 FINAL_BAM_EXTENSION      = config.get("final_bam_file_extension", ".bam")
-SCATTER_BY_CHROM         = config.get("mutect_scatter_by_chromosome", False)
+SCATTER_MODE             = config.get("scatter_mode", "none")  # "chromosome", "interval", or "none"
+SCATTER_COUNT            = config.get("scatter_count", 400)
+INTERVALS_DIR            = config.get("intervals_dir", "analysis/intervals")
 LOG_SUBFOLDER            = config["log_dir_sub"]
 METADATA_FILE            = config["metadata_file"]
 
+# Define chromosomes if scattering by chromosome
+CHROMOSOMES = [f"chr{i}" for i in range(1, 23)] + ["chrX", "chrY", "chrM"]
+
 ##############################################################################
-# 2) Optional environment-based scratch directory (e.g. for cluster jobs)
+# 2) Optional environment-based scratch directory (e.g., for cluster jobs)
 ##############################################################################
 SCRATCH_DIR = os.environ.get("TMPDIR", "/tmp")
 
@@ -49,14 +40,11 @@ print(f"DEBUG: Loading metadata from {METADATA_FILE}")
 with open(METADATA_FILE, "r") as f:
     reader = csv.DictReader(f, delimiter="\t")
     for row in reader:
-        # e.g. 'analysis_key' = individual_analysis
+        # e.g., 'analysis_key' = individual_analysis
         analysis_key = f"{row['individual1']}_{row['analysis']}"
         metadata_dict[analysis_key] = row
 
 print(f"DEBUG: Number of entries in metadata: {len(metadata_dict)}")
-
-# If scattering by chromosome is turned on, define full list of contigs
-CHROMOSOMES = [f"chr{i}" for i in range(1, 23)] + ["chrX", "chrY", "chrM"]
 
 ##############################################################################
 # 4) Define helper functions for resource usage and expansions
@@ -65,26 +53,37 @@ def get_mem_from_threads(wildcards, threads):
     """Default: 4400 MB per thread."""
     return threads * 4400
 
-# For referencing final scattered or single-chrom outputs
-def get_chrom_list():
-    return CHROMOSOMES if SCATTER_BY_CHROM else ["all"]
+def get_scatter_units():
+    """
+    Return the list of units by which we scatter.
+    If 'chromosome', return CHROMOSOMES.
+    If 'interval', return e.g. ['0000-scattered', '0001-scattered', ... ].
+    If 'none', return ['all'].
+    """
+    if SCATTER_MODE == "chromosome":
+        return CHROMOSOMES
+    elif SCATTER_MODE == "interval":
+        return [f"{i:04d}-scattered" for i in range(SCATTER_COUNT)]
+    else:
+        return ["all"]
+
+SCATTER_UNITS = get_scatter_units()
 
 ##############################################################################
 # 5) Make sure directories exist
 ##############################################################################
-VARIANT_DIR        = os.path.join(OUTPUT_FOLDER, "variant_calls")
-MERGED_DIR         = os.path.join(OUTPUT_FOLDER, "variant_merge")
-CONTAM_DIR         = os.path.join(OUTPUT_FOLDER, "calculate_contamination")
-FILTERED_DIR       = os.path.join(OUTPUT_FOLDER, "filtered_vcfs")
-LOG_DIR            = os.path.join(OUTPUT_FOLDER, LOG_SUBFOLDER)
+VARIANT_DIR          = os.path.join(OUTPUT_FOLDER, "variant_calls")
+MERGED_DIR           = os.path.join(OUTPUT_FOLDER, "variant_merge")
+CONTAM_DIR           = os.path.join(OUTPUT_FOLDER, "calculate_contamination")
+FILTERED_DIR         = os.path.join(OUTPUT_FOLDER, "filtered_vcfs")
+LOG_DIR              = os.path.join(OUTPUT_FOLDER, LOG_SUBFOLDER)
+INTERVALS_OUTPUT_DIR = INTERVALS_DIR
 
-# Create them if they do not exist
-for d in [VARIANT_DIR, MERGED_DIR, CONTAM_DIR, FILTERED_DIR, LOG_DIR]:
+for d in [VARIANT_DIR, MERGED_DIR, CONTAM_DIR, FILTERED_DIR, LOG_DIR, INTERVALS_OUTPUT_DIR]:
     os.makedirs(d, exist_ok=True)
 
 ##############################################################################
 # 6) Final outputs & "rule all"
-#    Our final deliverable is the "filtered" VCF for each analysis_key
 ##############################################################################
 rule all:
     """
@@ -93,9 +92,9 @@ rule all:
     input:
         # a) Ensure scattered calls exist
         expand(
-            f"{VARIANT_DIR}/{{analysis_key}}_{{chrom}}.vcf.gz",
+            f"{VARIANT_DIR}/{{analysis_key}}_{{chromosome}}.vcf.gz",
             analysis_key=metadata_dict.keys(),
-            chrom=get_chrom_list()
+            chromosome=SCATTER_UNITS
         ),
         # b) Ensure merged calls (VCF, TBI, stats, f1r2 tar)
         expand(
@@ -122,25 +121,93 @@ rule all:
         )
 
 ##############################################################################
-# 7) Call Variants (Mutect2) scattered by chromosome
+# 7) Scatter intervals if SCATTER_MODE is 'interval'
+##############################################################################
+if SCATTER_MODE == "interval":
+    rule scatter_intervals_by_ns:
+        """
+        Scatter intervals across the reference genome's Ns using GATK ScatterIntervalsByNs.
+        """
+        input:
+            reference=REFERENCE_UNPACKED
+        output:
+            scattered_interval_list=os.path.join(INTERVALS_OUTPUT_DIR, "scattered.interval_list")
+        log:
+            os.path.join(LOG_DIR, "scatter_intervals_by_ns.log")
+        conda:
+            "gatk"
+        shell:
+            r"""
+            echo "DEBUG: Starting ScatterIntervalsByNs" > {log}
+            gatk ScatterIntervalsByNs \
+                -R {input.reference} \
+                -O {output.scattered_interval_list} &>> {log}
+            echo "DEBUG: Finished ScatterIntervalsByNs" >> {log}
+            """
+
+    rule split_intervals:
+        """
+        Split intervals into SCATTER_COUNT parts using GATK SplitIntervals,
+        then convert each .interval_list => .bed
+        """
+        input:
+            scattered_interval_list=os.path.join(INTERVALS_OUTPUT_DIR, "scattered.interval_list"),
+            reference=REFERENCE_UNPACKED
+        output:
+            interval_lists=temp(expand(os.path.join(INTERVALS_OUTPUT_DIR, "{scatter_id}-scattered.interval_list"),
+                                       scatter_id=[f"{i:04d}" for i in range(SCATTER_COUNT)])),
+            bed_files=temp(expand(os.path.join(INTERVALS_OUTPUT_DIR, "{scatter_id}-scattered.bed"),
+                                  scatter_id=[f"{i:04d}" for i in range(SCATTER_COUNT)]))
+        log:
+            os.path.join(LOG_DIR, "split_intervals.log")
+        conda:
+            "gatk"
+        shell:
+            r"""
+            echo "DEBUG: Starting SplitIntervals" > {log}
+            gatk SplitIntervals \
+                -R {input.reference} \
+                -L {input.scattered_interval_list} \
+                --scatter-count {SCATTER_COUNT} \
+                -O {INTERVALS_OUTPUT_DIR} &>> {log}
+            echo "DEBUG: Finished SplitIntervals" >> {log}
+
+            # Convert each .interval_list => .bed
+            for interval in {INTERVALS_OUTPUT_DIR}/*-scattered.interval_list; do
+                bed="${{interval%.interval_list}}.bed"
+                sed 's/[:\-]/\t/g' "$interval" \
+                    | grep -v "^@" \
+                    | cut -f1-3 \
+                    > "$bed"
+            done
+            """
+
+##############################################################################
+# 8) Call Variants (Mutect2) scattered by chromosome or interval
 ##############################################################################
 rule call_variants:
     """
-    Call variants with Mutect2 for each analysis_key, either scattered by chromosome 
-    or once with 'all' if SCATTER_BY_CHROM=False.
+    Call variants with Mutect2, either scattered by chromosome or interval.
     """
     input:
         bam1=lambda wc: os.path.join(
             FINAL_BAM_FOLDER,
             metadata_dict[wc.analysis_key]["bam1_file_basename"] + FINAL_BAM_EXTENSION
         ),
+        # Return a 1-element list if bam2_file_basename exists, otherwise an empty list
         bam2=lambda wc: (
-            os.path.join(
+            [os.path.join(
                 FINAL_BAM_FOLDER,
                 metadata_dict[wc.analysis_key]["bam2_file_basename"] + FINAL_BAM_EXTENSION
-            )
+            )]
             if metadata_dict[wc.analysis_key].get("bam2_file_basename")
-            else ""
+            else []
+        ),
+        # Return a 1-element list if scatter_mode=interval and chromosome!=all, otherwise empty list
+        intervals=lambda wc: (
+            [os.path.join(INTERVALS_OUTPUT_DIR, f"{wc.chromosome}-scattered.interval_list")]
+            if SCATTER_MODE == "interval" and wc.chromosome != "all"
+            else []
         )
     output:
         variant_file = f"{VARIANT_DIR}/{{analysis_key}}_{{chromosome}}.vcf.gz"
@@ -163,52 +230,78 @@ rule call_variants:
     shell:
         r"""
         echo "DEBUG: Starting Mutect2 call for {wildcards.analysis_key} {wildcards.chromosome}" >&2
-
-        # Optionally use normal bam if present
-        bam2_option=""
-        normal_option=""
-        if [ -n "{input.bam2}" ] && [ "{input.bam2}" != "" ]; then
-            bam2_option="-I {input.bam2}"
-            normal_option="-normal {params.normal_sample}"
+        
+        # We now expect input.bam2 to be a list (length 0 or 1)
+        # We can build an array of -I options from both bam1 and bam2
+        BAMS=()
+        
+        # Always add bam1 as -I
+        BAMS+=("-I {input.bam1}")
+        
+        # If bam2 is present in the list, add it
+        for b2 in {input.bam2}; do
+            if [ -s "$b2" ]; then
+                echo "DEBUG: Found second BAM: $b2" >&2
+                BAMS+=("-I $b2")
+                # Also pass the normal sample name if desired
+                if [ -n "{params.normal_sample}" ]; then
+                    BAMS+=("-normal {params.normal_sample}")
+                fi
+            fi
+        done
+        
+        # Intervals (list of length 0 or 1)
+        SCATTER_ARGS=""
+        for intervals_file in {input.intervals}; do
+            if [ -s "$intervals_file" ]; then
+                echo "DEBUG: Found intervals file: $intervals_file" >&2
+                SCATTER_ARGS="-L $intervals_file"
+            fi
+        done
+        
+        if [ "{SCATTER_MODE}" = "chromosome" ] && [ "{wildcards.chromosome}" != "all" ]; then
+            echo "DEBUG: Using chromosome scattering for {wildcards.chromosome}" >&2
+            SCATTER_ARGS="-L {wildcards.chromosome}"
         fi
-
-        # Scatter by chromosome or do 'all'
-        scatter_option=""
-        if [ "{SCATTER_BY_CHROM}" = "True" ] && [ "{wildcards.chromosome}" != "all" ]; then
-            scatter_option="-L {wildcards.chromosome}"
-        fi
-
+        
+        # Construct the final BAMS string
+        BAMS_STR="${{BAMS[*]}}"
+        echo "DEBUG: Final BAMS_STR: $BAMS_STR" >&2
+        
         gatk --java-options '-Xms4000m -Xmx10g -Djava.io.tmpdir={resources.tmpdir}' Mutect2 \
             -R "{params.reference}" \
-            -I "{input.bam1}" \
-            $bam2_option \
-            $normal_option \
+            $BAMS_STR \
             --germline-resource "{params.af_gnomad}" \
             --panel-of-normals "{params.pon}" \
             --genotype-germline-sites true \
             --genotype-pon-sites true \
             --f1r2-tar-gz "{VARIANT_DIR}/{params.individual}_{params.analysis}_{wildcards.chromosome}.f1r2.tar.gz" \
-            $scatter_option \
+            $SCATTER_ARGS \
             -O "{output.variant_file}" 2> "{log.mutect2_log}"
 
         echo "DEBUG: Finished Mutect2 call for {wildcards.analysis_key} {wildcards.chromosome}" >&2
         """
 
 ##############################################################################
-# 8) Merge scattered calls (VCF, stats, f1r2)
+# 9) Merge scattered calls (VCF, stats, f1r2)
 ##############################################################################
 rule merge_vcfs:
     """
-    Merge scattered VCF files across all chosen chromosomes into one final VCF per analysis_key.
+    Merge scattered VCF files across all chosen chromosomes/intervals.
     """
     input:
-        lambda wc: [f"{VARIANT_DIR}/{wc.analysis_key}_{chrom}.vcf.gz" for chrom in get_chrom_list()]
+        vcf_files=lambda wc: [
+            f"{VARIANT_DIR}/{wc.analysis_key}_{chrom}.vcf.gz"
+            for chrom in SCATTER_UNITS
+            if chrom != "all"
+        ]
     output:
         vcf  = f"{MERGED_DIR}/{{analysis_key}}.vcf.gz",
         tbi  = f"{MERGED_DIR}/{{analysis_key}}.vcf.gz.tbi"
     params:
         input_files = lambda wc: ' '.join(
-            f"-I {VARIANT_DIR}/{wc.analysis_key}_{chrom}.vcf.gz" for chrom in get_chrom_list()
+            f"-I {VARIANT_DIR}/{wc.analysis_key}_{chrom}.vcf.gz"
+            for chrom in SCATTER_UNITS if chrom != "all"
         )
     threads: 4
     resources:
@@ -235,12 +328,16 @@ rule merge_stats:
     Merge .stats files from scattered calls.
     """
     input:
-        lambda wc: [f"{VARIANT_DIR}/{wc.analysis_key}_{chrom}.vcf.gz.stats" for chrom in get_chrom_list()]
+        stats_files=lambda wc: [
+            f"{VARIANT_DIR}/{wc.analysis_key}_{chrom}.vcf.gz.stats"
+            for chrom in SCATTER_UNITS if chrom != "all"
+        ]
     output:
         stats_merged = f"{MERGED_DIR}/{{analysis_key}}.vcf.gz.stats"
     params:
         input_files = lambda wc: ' '.join(
-            f"-stats {VARIANT_DIR}/{wc.analysis_key}_{chrom}.vcf.gz.stats" for chrom in get_chrom_list()
+            f"-stats {VARIANT_DIR}/{wc.analysis_key}_{chrom}.vcf.gz.stats"
+            for chrom in SCATTER_UNITS if chrom != "all"
         )
     threads: 4
     resources:
@@ -262,15 +359,19 @@ rule merge_stats:
 
 rule merge_f1r2:
     """
-    Merge scattered f1r2 tar.gz files across chromosomes.
+    Merge scattered f1r2 tar.gz files across scatter units.
     """
     input:
-        lambda wc: [f"{VARIANT_DIR}/{wc.analysis_key}_{chrom}.f1r2.tar.gz" for chrom in get_chrom_list()]
+        f1r2_files=lambda wc: [
+            f"{VARIANT_DIR}/{wc.analysis_key}_{chrom}.f1r2.tar.gz"
+            for chrom in SCATTER_UNITS if chrom != "all"
+        ]
     output:
         tar_merged = f"{MERGED_DIR}/{{analysis_key}}_read-orientation-model.tar.gz"
     params:
         input_files = lambda wc: ' '.join(
-            f"-I {VARIANT_DIR}/{wc.analysis_key}_{chrom}.f1r2.tar.gz" for chrom in get_chrom_list()
+            f"-I {VARIANT_DIR}/{wc.analysis_key}_{chrom}.f1r2.tar.gz"
+            for chrom in SCATTER_UNITS if chrom != "all"
         )
     threads: 4
     resources:
@@ -291,7 +392,7 @@ rule merge_f1r2:
         """
 
 ##############################################################################
-# 9) GetPileupSummaries for contamination (for each unique BAM)
+# 10) GetPileupSummaries for contamination (for each unique BAM)
 ##############################################################################
 all_bam_basenames = set()
 for row in metadata_dict.values():
@@ -332,7 +433,7 @@ rule get_pileup_summaries:
         """
 
 ##############################################################################
-# 10) CalculateContamination for each analysis_key
+# 11) CalculateContamination for each analysis_key
 ##############################################################################
 rule calculate_contamination:
     """
@@ -343,11 +444,9 @@ rule calculate_contamination:
             CONTAM_DIR, metadata_dict[wc.analysis_key]["bam1_file_basename"] + ".getpileupsummaries.table"
         ),
         normal_pileup=lambda wc: (
-            os.path.join(
-                CONTAM_DIR, metadata_dict[wc.analysis_key]["bam2_file_basename"] + ".getpileupsummaries.table"
-            )
+            os.path.join(CONTAM_DIR, metadata_dict[wc.analysis_key]["bam2_file_basename"] + ".getpileupsummaries.table")
             if metadata_dict[wc.analysis_key].get("bam2_file_basename")
-            else []
+            else ""
         )
     output:
         contamination_table=f"{CONTAM_DIR}/{{analysis_key}}.contamination.table",
@@ -379,7 +478,7 @@ rule calculate_contamination:
         """
 
 ##############################################################################
-# 11) Filter Mutect Calls
+# 12) Filter Mutect Calls
 ##############################################################################
 rule filter_mutect_calls:
     """
