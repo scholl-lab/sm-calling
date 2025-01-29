@@ -263,6 +263,8 @@ rule merge_vcfs:
         merged_vcf = FINAL_MERGED_VCF
     log:
         os.path.join(LOGS_DIR, "merge_freebayes.log")
+    conda:
+        "bcftools"
     shell:
         r"""
         set -e
