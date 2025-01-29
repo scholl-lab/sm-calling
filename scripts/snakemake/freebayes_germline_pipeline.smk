@@ -202,7 +202,7 @@ rule freebayes_scatter:
         log = f"{LOGS_DIR}/freebayes_{{scatter_id}}.log"
     threads: 2
     resources:
-        mem_mb = 8192
+        mem_mb = 16384
     conda:
         FREEBAYES_ENV
     shell:
