@@ -20,6 +20,7 @@ FINAL_MERGED_VCF  = config["final_merged_vcf"]
 
 FREEBAYES_ENV     = config["freebayes_env"]  # e.g. "freebayes"
 GATK_ENV          = config["gatk_env"]       # e.g. "gatk"
+BCFTOOLS_ENV     = config["bcftools_env"]  # e.g. "freebayes"
 
 # Make sure directories exist
 os.makedirs(RESULTS_DIR, exist_ok=True)
@@ -184,15 +185,29 @@ def get_scatter_units():
 SCATTER_UNITS = get_scatter_units()
 
 ##############################################################################
-# 9) Exponential memory usage for freebayes_scatter
+# 9) Exponential memory usage + threads for freebayes_scatter
 ##############################################################################
 def exponential_mem_mb(wildcards, attempt):
     """
-    For each retry attempt, double the memory.
-    Start at 16 GB (16384 MB) => next attempt 32 GB => then 64 GB
+    For each retry attempt, double the memory:
+    1st attempt: 16 GB (16384 MB)
+    2nd attempt: 32 GB
+    3rd attempt: 64 GB
+    ...
     """
     base_mem = 16384  # 16 GB in MB
     return base_mem * (2 ** (attempt - 1))
+
+def exponential_threads(wildcards, attempt):
+    """
+    For each retry attempt, double the threads:
+    1st attempt: 2 threads
+    2nd attempt: 4 threads
+    3rd attempt: 8 threads
+    ...
+    """
+    base_threads = 2
+    return base_threads * (2 ** (attempt - 1))
 
 ##############################################################################
 # 9) FreeBayes scatter rule
@@ -201,6 +216,7 @@ rule freebayes_scatter:
     """
     Run FreeBayes on each scatter chunk (chromosome or interval),
     compress the VCF with bgzip, then index it with tabix.
+    Doubling memory & threads each retry.
     """
     input:
         reference=REFERENCE_GENOME,
@@ -209,7 +225,7 @@ rule freebayes_scatter:
     output:
         vcf = f"{RESULTS_DIR}/freebayes_{{scatter_id}}.vcf.gz",
         log = f"{LOGS_DIR}/freebayes_{{scatter_id}}.log"
-    threads: 2
+    threads: exponential_threads
     resources:
         mem_mb = exponential_mem_mb
     conda:
@@ -264,7 +280,7 @@ rule merge_vcfs:
     log:
         os.path.join(LOGS_DIR, "merge_freebayes.log")
     conda:
-        "bcftools"
+        BCFTOOLS_ENV
     shell:
         r"""
         set -e

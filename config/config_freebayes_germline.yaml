@@ -22,3 +22,6 @@ freebayes_env: "freebayes"
 
 # If using the GATK-based scatter:
 gatk_env: "gatk"
+
+# For merging VCFs
+bcftools_env: "bcftools"
