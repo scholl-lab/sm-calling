@@ -20,7 +20,7 @@ FINAL_MERGED_VCF  = config["final_merged_vcf"]
 
 FREEBAYES_ENV     = config["freebayes_env"]  # e.g. "freebayes"
 GATK_ENV          = config["gatk_env"]       # e.g. "gatk"
-BCFTOOLS_ENV     = config["bcftools_env"]  # e.g. "freebayes"
+BCFTOOLS_ENV      = config["bcftools_env"]   # e.g. "bcftools"
 
 # Make sure directories exist
 os.makedirs(RESULTS_DIR, exist_ok=True)
@@ -43,8 +43,7 @@ print(f"DEBUG: Found {len(BAM_FILES)} BAM(s) in {BAM_LIST_FILE}")
 
 ##############################################################################
 # 3) Function to convert freebayes_params dict to a command-line string
-#    If the value is "true", treat it as a flag-only (no value appended).
-##############################################################################
+#    If the value is "true", treat it as a flag-only (no value appended).##############################################################################
 def freebayes_param_str(params_dict):
     """
     Convert a dictionary of FreeBayes params to a command-line string.
@@ -123,7 +122,7 @@ rule scatter_intervals_by_ns:
         """
 
 ##############################################################################
-# 7) Split intervals => produce "0000-scattered.interval_list" etc. + BED
+# 7) Split intervals => produce scattered files + bed
 ##############################################################################
 rule split_intervals:
     """
@@ -134,8 +133,9 @@ rule split_intervals:
         intervals_list=os.path.join(INTERVALS_DIR, "scattered.interval_list"),
         reference=REFERENCE_GENOME
     output:
-        interval_lists=SCATTERED_INTERVAL_LISTS,
-        bed_files=SCATTERED_BED_FILES
+        # Mark these scattered intervals and bed files as temp so they can be removed after usage
+        interval_lists=temp(SCATTERED_INTERVAL_LISTS),
+        bed_files=temp(SCATTERED_BED_FILES)
     params:
         scatter_count=SCATTER_COUNT
     log:
@@ -172,7 +172,7 @@ rule split_intervals:
         """
 
 ##############################################################################
-# 8) Decide scatter units (chromosome or interval)
+# 8) Determine scatter units (chromosome or interval)
 ##############################################################################
 def get_scatter_units():
     if SCATTER_MODE == "chromosome":
@@ -188,24 +188,10 @@ SCATTER_UNITS = get_scatter_units()
 # 9) Exponential memory usage + threads for freebayes_scatter
 ##############################################################################
 def exponential_mem_mb(wildcards, attempt):
-    """
-    For each retry attempt, double the memory:
-    1st attempt: 16 GB (16384 MB)
-    2nd attempt: 32 GB
-    3rd attempt: 64 GB
-    ...
-    """
     base_mem = 16384  # 16 GB in MB
     return base_mem * (2 ** (attempt - 1))
 
 def exponential_threads(wildcards, attempt):
-    """
-    For each retry attempt, double the threads:
-    1st attempt: 2 threads
-    2nd attempt: 4 threads
-    3rd attempt: 8 threads
-    ...
-    """
     base_threads = 2
     return base_threads * (2 ** (attempt - 1))
 
@@ -217,14 +203,15 @@ rule freebayes_scatter:
     Run FreeBayes on each scatter chunk (chromosome or interval),
     compress the VCF with bgzip, then index it with tabix.
     Doubling memory & threads each retry.
+    Mark the scattered FreeBayes VCF as temp so it can be removed post-merge.
     """
     input:
         reference=REFERENCE_GENOME,
         bam_files=BAM_FILES,
         bed_file=lambda wc: os.path.join(INTERVALS_DIR, f"{wc.scatter_id}.bed")
     output:
-        vcf = f"{RESULTS_DIR}/freebayes_{{scatter_id}}.vcf.gz",
-        log = f"{LOGS_DIR}/freebayes_{{scatter_id}}.log"
+        vcf=temp(f"{RESULTS_DIR}/freebayes_{{scatter_id}}.vcf.gz"),
+        log=f"{LOGS_DIR}/freebayes_{{scatter_id}}.log"
     threads: exponential_threads
     resources:
         mem_mb = exponential_mem_mb
@@ -264,7 +251,7 @@ rule freebayes_scatter:
         """
 
 ##############################################################################
-# 10) Merge and normalize scattered .vcf.gz files => final merged VCF
+# 10) Merge and normalize scattered .vcf.gz => final VCF
 ##############################################################################
 rule merge_vcfs:
     """
@@ -276,7 +263,7 @@ rule merge_vcfs:
             scatter_id=SCATTER_UNITS
         )
     output:
-        merged_vcf = FINAL_MERGED_VCF
+        merged_vcf=FINAL_MERGED_VCF
     log:
         os.path.join(LOGS_DIR, "merge_freebayes.log")
     conda:
@@ -292,17 +279,16 @@ rule merge_vcfs:
         # 4) write final compressed VCF
         bcftools concat \
             -n \
-            -o - \
             -O z \
             {input} 2>> {log} \
         | bcftools norm \
             -m-any --force -a --atom-overlaps . \
             -f {REFERENCE_GENOME} \
             - 2>> {log} \
-        | bcftools +fill-tags -- \
+        | bcftools +fill-tags \
             -O z \
             -o {output.merged_vcf} \
-            -W tbi \
+            -W=tbi - -- \
             2>> {log}
 
         echo "Done merging final VCF." >> {log}
