@@ -1,4 +1,4 @@
-# config.yaml
+# config_freebayes_germline.yaml
 
 bam_list_file: "metadata/BAMs.list"        # File containing one BAM path per line
 reference_genome: "analysis/ref/GRCh38/GCA_000001405.15_GRCh38_no_alt_analysis_set.fna"    # Path to reference

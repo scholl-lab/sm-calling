@@ -1,0 +1,45 @@
+# config_mutect2.yaml
+
+##############################################################################
+# 1) Basic I/O settings
+##############################################################################
+
+# Final BAMs (post-BQSR) directory
+final_bam_folder: "results/exomes/bqsr"
+
+# Metadata file with columns like "individual1", "analysis", "bam1_file_basename", etc.
+metadata_file: "configs/calling_To_metadata.tsv"
+
+# The main output folder for Mutect2 (VCFs, logs, etc.)
+output_folder: "results/exomes/VCFs/mutect2"
+
+# Where logs will be stored (subdirectory under 'output_folder')
+log_dir_sub: "logs"
+
+##############################################################################
+# 2) Reference and resource settings
+##############################################################################
+
+# Reference genome in uncompressed FASTA form (used by GATK)
+reference_unpacked: "analysis/ref/GRCh38/GCA_000001405.15_GRCh38_no_alt_analysis_set.fna"
+
+# Panel of Normals and gnomAD resource files (for Mutect2)
+panel_of_normals: "analysis/GATK_resource_bundle/1000g_pon.hg38.vcf.gz"
+af_only_gnomad: "analysis/GATK_resource_bundle/af-only-gnomad.hg38.vcf.gz"
+common_biallelic_gnomad: "analysis/GATK_resource_bundle/af-only-gnomad.hg38.common_biallelic.vcf.gz"
+
+##############################################################################
+# 3) BAM extension and scatter parameters
+##############################################################################
+
+# File extension for final post-BQSR BAMs (e.g. ".merged.dedup.bqsr.bam")
+final_bam_file_extension: ".merged.dedup.bqsr.bam"
+
+# Scatter mode can be: "chromosome", "interval", or "none"
+scatter_mode: "interval"
+
+# Number of intervals if scatter_mode == "interval"
+scatter_count: 400
+
+# Directory to store scattered interval files (e.g. from GATK SplitIntervals)
+intervals_dir: "analysis/intervals"
