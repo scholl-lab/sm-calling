@@ -210,7 +210,9 @@ rule call_variants:
             else []
         )
     output:
-        variant_file = f"{VARIANT_DIR}/{{analysis_key}}_{{chromosome}}.vcf.gz"
+        variant_file = f"{VARIANT_DIR}/{{analysis_key}}_{{chromosome}}.vcf.gz",
+        stats = f"{VARIANT_DIR}/{{analysis_key}}_{{chromosome}}.vcf.gz.stats",
+        f1r2 = f"{VARIANT_DIR}/{{analysis_key}}_{{chromosome}}.f1r2.tar.gz"
     threads: 4
     resources:
         mem_mb = get_mem_from_threads,
@@ -440,23 +442,31 @@ rule calculate_contamination:
     Calculate contamination for each tumor sample (and matched normal, if present).
     """
     input:
-        tumor_pileup=lambda wc: os.path.join(
-            CONTAM_DIR, metadata_dict[wc.analysis_key]["bam1_file_basename"] + ".getpileupsummaries.table"
+        # Return a 1-element list if bam1_file_basename is defined, otherwise empty
+        tumor_pileup=lambda wc: (
+            [
+                os.path.join(
+                    CONTAM_DIR,
+                    metadata_dict[wc.analysis_key]["bam1_file_basename"] + ".getpileupsummaries.table"
+                )
+            ]
+            if metadata_dict[wc.analysis_key].get("bam1_file_basename")
+            else []
         ),
+        # Return a 1-element list if bam2_file_basename is defined, otherwise empty
         normal_pileup=lambda wc: (
-            os.path.join(CONTAM_DIR, metadata_dict[wc.analysis_key]["bam2_file_basename"] + ".getpileupsummaries.table")
+            [
+                os.path.join(
+                    CONTAM_DIR,
+                    metadata_dict[wc.analysis_key]["bam2_file_basename"] + ".getpileupsummaries.table"
+                )
+            ]
             if metadata_dict[wc.analysis_key].get("bam2_file_basename")
-            else ""
+            else []
         )
     output:
         contamination_table=f"{CONTAM_DIR}/{{analysis_key}}.contamination.table",
         segments_table=f"{CONTAM_DIR}/{{analysis_key}}.segments.table"
-    params:
-        matched_option=lambda wc: (
-            f"--matched {os.path.join(CONTAM_DIR, metadata_dict[wc.analysis_key]['bam2_file_basename'] + '.getpileupsummaries.table')}"
-            if metadata_dict[wc.analysis_key].get("bam2_file_basename")
-            else ""
-        )
     threads: 4
     resources:
         mem_mb = get_mem_from_threads,
@@ -469,11 +479,43 @@ rule calculate_contamination:
     shell:
         r"""
         echo "DEBUG: Calculating contamination for {wildcards.analysis_key}" >&2
+
+        # The lists {input.tumor_pileup} and {input.normal_pileup} might have 0 or 1 file each.
+        # We'll extract them into shell variables if they exist:
+        TUMOR_FILE=""
+        for tfile in {input.tumor_pileup}; do
+            if [ -s "$tfile" ]; then
+                TUMOR_FILE="$tfile"
+                echo "DEBUG: Found tumor pileup: $TUMOR_FILE" >&2
+            fi
+        done
+
+        MATCHED_OPTION=""
+        for nfile in {input.normal_pileup}; do
+            if [ -s "$nfile" ]; then
+                MATCHED_OPTION="--matched $nfile"
+                echo "DEBUG: Found normal pileup: $nfile" >&2
+            fi
+        done
+
+        if [ -z "$TUMOR_FILE" ]; then
+            echo "WARNING: No tumor pileup table found for {wildcards.analysis_key}. Skipping." >&2
+            # You could either skip or fail here.
+            # If skipping, you might just 'touch' the output or raise an error:
+            touch {output.contamination_table}
+            touch {output.segments_table}
+            exit 0
+        fi
+
+        echo "DEBUG: matched_option=$MATCHED_OPTION" >&2
+
+        # Run GATK CalculateContamination
         gatk --java-options '-Xms4000m -Xmx{resources.mem_mb}m -Djava.io.tmpdir={resources.tmpdir}' CalculateContamination \
-            -I "{input.tumor_pileup}" \
-            {params.matched_option} \
+            -I "$TUMOR_FILE" \
+            $MATCHED_OPTION \
             --tumor-segmentation "{output.segments_table}" \
             -O "{output.contamination_table}" 2> "{log.calccont_log}"
+
         echo "DEBUG: Finished contamination for {wildcards.analysis_key}" >&2
         """
 
