@@ -1,0 +1,68 @@
+# sm-calling unified configuration
+# See config/README.md for field descriptions.
+
+# --- Caller selection ---
+caller: "mutect2"  # "mutect2" | "freebayes" | "all"
+
+# --- Reference genome ---
+ref:
+  genome: "analysis/ref/GRCh38/GCA_000001405.15_GRCh38_no_alt_analysis_set.fna"
+  build: "GRCh38"
+
+# --- GATK resources (required for Mutect2) ---
+gatk_resources:
+  panel_of_normals: "analysis/GATK_resource_bundle/1000g_pon.hg38.vcf.gz"
+  af_only_gnomad: "analysis/GATK_resource_bundle/af-only-gnomad.hg38.vcf.gz"
+  common_biallelic_gnomad: "analysis/GATK_resource_bundle/af-only-gnomad.hg38.common_biallelic.vcf.gz"
+
+# --- Paths ---
+paths:
+  samples: "config/samples.tsv"
+  bam_folder: "results/exomes/bqsr"
+  output_folder: "results/exomes/variant_calls"
+  log_subdir: "logs"
+  intervals_dir: "analysis/intervals"
+
+# --- BAM file settings ---
+bam:
+  file_extension: ".merged.dedup.bqsr.bam"
+
+# --- Scatter settings ---
+scatter:
+  mode: "chromosome"  # "chromosome" | "interval" | "none"
+  count: 400           # Number of intervals (for interval mode)
+  chromosomes:
+    - "chr1"
+    - "chr2"
+    - "chr3"
+    - "chr4"
+    - "chr5"
+    - "chr6"
+    - "chr7"
+    - "chr8"
+    - "chr9"
+    - "chr10"
+    - "chr11"
+    - "chr12"
+    - "chr13"
+    - "chr14"
+    - "chr15"
+    - "chr16"
+    - "chr17"
+    - "chr18"
+    - "chr19"
+    - "chr20"
+    - "chr21"
+    - "chr22"
+    - "chrX"
+    - "chrY"
+    - "chrM"
+
+# --- Tool-specific parameters (passthrough) ---
+params:
+  mutect2:
+    extra: "--genotype-germline-sites true --genotype-pon-sites true"
+  freebayes:
+    extra: "--min-coverage 20 --limit-coverage 500 --use-best-n-alleles 4 --standard-filters"
+  bcftools_norm:
+    extra: "-m-any --force -a --atom-overlaps ."

@@ -1,122 +1,158 @@
-# SM-CALLING
+# sm-calling
 
-This repository contains a set of Snakemake workflows designed for variant calling using GATK's MuTect2. The pipeline supports preprocessing steps such as merging VCF files, calculating contamination, and filtering variant calls. It is designed to be flexible and customizable through configuration files.
+Snakemake 8+ variant calling pipeline for somatic (Mutect2) and germline
+(FreeBayes) analysis on HPC clusters.
 
-## Requirements
+Part of the [scholl-lab](https://github.com/scholl-lab) bioinformatics suite.
 
-- Snakemake
-- Conda
-- GATK (installed through Conda in the pipeline)
-- Bcftools (for VCF file operations)
+## Quick Start
 
-## Installation
+```bash
+# 1. Install Snakemake 8+ and the SLURM executor plugin
+conda create -n snakemake -c conda-forge -c bioconda 'snakemake>=8.0'
+pip install snakemake-executor-plugin-slurm
 
-1. Clone this repository to your local system.
-2. Ensure you have all the required software installed.
+# 2. Edit configuration
+cp config/config.yaml config/my_config.yaml   # customize paths
+vim config/samples.tsv                         # add your samples
+
+# 3. Run (auto-detects BIH / Charite / local)
+sbatch scripts/run_snakemake.sh config/my_config.yaml
+```
+
+## Supported Callers
+
+| Caller | Analysis Types | Output |
+|--------|---------------|--------|
+| **Mutect2** | tumor_only, tumor_normal | Filtered somatic VCFs per sample |
+| **FreeBayes** | germline | Merged + normalized germline VCF |
+
+Set `caller` in `config/config.yaml` to `"mutect2"`, `"freebayes"`, or `"all"`.
 
 ## Configuration
 
-Before running the pipeline, you need to configure the following files:
+### `config/config.yaml`
 
-### `config.yaml`
+Unified hierarchical configuration. Key sections:
 
-This file contains the settings for the pipeline. Here are the details of the settings that you can configure:
+| Section | Description |
+|---------|-------------|
+| `caller` | Which caller(s) to run |
+| `ref` | Reference genome path and build |
+| `gatk_resources` | Panel of normals, gnomAD files (Mutect2) |
+| `paths` | Input BAM folder, output folder, samples TSV |
+| `bam` | BAM file extension |
+| `scatter` | Scatter mode (`chromosome` / `interval` / `none`) |
+| `params` | Tool-specific extra arguments |
 
-- `final_bam_folder`: The folder containing the final BAM files.
-- `final_bam_file_extension`: (Optional) The extension of the BAM files (default: ".bam").
-- `output_folder`: The folder where the output files will be stored.
-- `reference_unpacked`: The path to the reference genome file.
-- `panel_of_normals`: The path to the Panel of Normals file.
-- `af_only_gnomad`: The path to the allele frequency only gnomAD file.
-- `mutect_scatter_by_chromosome`: (Optional) Set to `True` to enable scattering by chromosome, `False` otherwise (default: `False`).
+### `config/samples.tsv`
 
-### `calling_metadata.tsv`
+Tab-separated sample sheet:
 
-This file contains the metadata for the analyses to be run. It should contain the following columns:
+```
+sample          tumor_bam          normal_bam        analysis_type
+IND001_To       IND001.tumor       .                 tumor_only
+IND002_TN       IND002.tumor       IND002.normal     tumor_normal
+IND003_G        IND003             .                 germline
+```
 
-- `individual1`: The identifier for the first individual.
-- `individual2`: (Optional) The identifier for the second individual. Leave empty for tumor-only analyses.
-- `analysis`: The type of analysis to be performed (e.g., "To" for tumor-only).
-- `sample1`: The name of the first sample (tumor sample).
-- `sample2`: (Optional) The name of the second sample (normal sample). Leave empty for tumor-only analyses.
-- `bam1_file_basename`: The basename of the BAM file for the first sample.
-- `bam2_file_basename`: (Optional) The basename of the BAM file for the second sample. Leave empty for tumor-only analyses.
+- `sample`: Unique identifier (used in output filenames)
+- `tumor_bam`: BAM basename (without extension)
+- `normal_bam`: Matched normal basename, or `.` if none
+- `analysis_type`: One of `tumor_only`, `tumor_normal`, `germline`
 
-## Running the Pipeline
+## Running on HPC
 
-The pipeline is executed in a specific order using the provided shell scripts. Below is the order of execution along with a brief description of each step:
+The launcher auto-detects the cluster environment:
 
-1. **MuTect2 Calling** (`mutect2_calling.smk`):
-    - This script performs variant calling using GATK's MuTect2 on the provided BAM files.
-    - To run this step, use the following command:
-      ```sh
-      sbatch run_mutect2_calling.sh
-      ```
+```bash
+# Submit via SLURM (auto-detects BIH or Charite):
+sbatch scripts/run_snakemake.sh
 
-2. **Merge MuTect2 Calls** (`merge_mutect2_calls.smk`):
-    - This script merges the VCF files generated in the previous step using GATK's GatherVcfs, and merges stats files using GATK's MergeMutectStats. It also processes f1r2 files for LearnReadOrientationModel.
-    - To run this step, use the following command:
-      ```sh
-      sbatch run_merge_mutect2_calls.sh
-      ```
+# Custom config:
+sbatch scripts/run_snakemake.sh config/my_config.yaml
 
-3. **Calculate Contamination** (`gatk_calculate_contamination.smk`):
-    - This script calculates the contamination in the sample using GATK's CalculateContamination.
-    - To run this step, use the following command:
-      ```sh
-      sbatch run_gatk_calculate_contamination.sh
-      ```
+# Dry-run (local):
+bash scripts/run_snakemake.sh config/config.yaml -n
 
-4. **Filter MuTect Calls** (`gatk_filter_mutect_calls.smk`):
-    - This script filters the merged VCF files to remove false positives using GATK's FilterMutectCalls.
-    - To run this step, use the following command:
-      ```sh
-      sbatch run_gatk_filter_mutect_calls.sh
-      ```
+# Pass extra Snakemake flags:
+sbatch scripts/run_snakemake.sh config/config.yaml --forcerun mutect2_call
+```
 
-## Output
+Or invoke Snakemake directly:
 
-The pipeline produces the following outputs in the `output_folder` specified in the `config.yaml`:
+```bash
+snakemake \
+    -s workflow/Snakefile \
+    --configfile config/config.yaml \
+    --workflow-profile profiles/default \
+    --profile profiles/bih
+```
 
-- `variant_calls`: A folder containing the initial VCF files with the variant calls.
-- `variant_merge`: A folder containing merged VCF files, stats files, and orientation model files.
-- `calculate_contamination`: A folder containing contamination tables and segment tables.
-- `filtered_vcfs`: A folder containing the final filtered VCF files.
-- `logs`: A folder containing the log files for each step of the pipeline.
+## Pipeline Architecture
 
-Each VCF file is named with the format `<individual1>_<analysis>_<chromosome>.vcf.gz`.
+```
+workflow/Snakefile
+    |
+    +-- rules/common.smk      Config shortcuts, metadata, helpers
+    +-- rules/scatter.smk      Interval scattering (shared)
+    +-- rules/mutect2.smk      Mutect2: call -> gather -> contamination -> filter
+    +-- rules/freebayes.smk    FreeBayes: call -> merge + normalize
+```
 
-## Pipeline Diagram
+### Mutect2 DAG
 
-```mermaid
-graph TD
-    A[mutect2_calling.smk] --> B[merge_mutect2_calls.smk]
-    B --> C[gatk_calculate_contamination.smk]
-    C --> D[gatk_filter_mutect_calls.smk]
+```
+BAM files
+    +-> mutect2_call (per sample x scatter_unit)        [temp]
+    +-> get_pileup_summaries (per unique BAM)
+    +-> gather_mutect2_vcfs (per sample)
+    +-> merge_mutect2_stats (per sample)
+    +-> learn_read_orientation (per sample)
+    +-> calculate_contamination (per sample)
+    +-> filter_mutect_calls (per sample)                [protected]
+```
 
-    subgraph Inputs
-        I1[final BAM files]
-        I2[config.yaml]
-        I3[calling_metadata.tsv]
-    end
+### FreeBayes DAG
 
-    subgraph Outputs
-        O1[variant_calls]
-        O2[variant_merge]
-        O3[calculate_contamination]
-        O4[filtered_vcfs]
-        O5[logs]
-    end
+```
+BAM files
+    +-> freebayes_call (per scatter_unit)               [temp]
+    +-> merge_freebayes_vcfs                            [protected]
+```
 
-    I1 --> A
-    I2 --> A
-    I3 --> A
-    D --> O1
-    D --> O2
-    D --> O3
-    D --> O4
-    D --> O5
+## Development
+
+```bash
+# Lint
+make lint
+
+# Format
+make format
+
+# Run unit tests
+make test-unit
+
+# Run all tests (requires snakemake + conda)
+make test
+```
+
+## Project Structure
+
+```
+sm-calling/
++-- config/              Configuration and sample sheet
++-- workflow/
+|   +-- Snakefile        Entry point (Snakemake 8+)
+|   +-- rules/           Rule files + helpers.py
+|   +-- envs/            Conda environment definitions
+|   +-- schemas/          JSON schemas for validation
++-- profiles/            Snakemake profiles (default, bih, charite, local)
++-- scripts/             Universal launcher
++-- tests/               pytest unit and integration tests
++-- deprecated/          Old standalone workflows (preserved for reference)
 ```
 
 ## License
-This project is licensed under the MIT License. See the LICENSE file for more details.
+
+MIT License. See [LICENSE](LICENSE) for details.
