@@ -1,0 +1,34 @@
+"""sm-calling: Somatic and germline variant calling pipeline.
+
+Requires Snakemake 8.0+. Uses the SLURM executor plugin for cluster execution.
+"""
+
+from snakemake.utils import min_version, validate
+
+min_version("8.0")
+
+import pandas as pd
+
+
+# -- Configuration -----------------------------------------------------------
+configfile: "config/config.yaml"
+
+
+validate(config, "schemas/config.schema.yaml")
+
+samples_df = pd.read_table(config["paths"]["samples"]).set_index("sample", drop=False)
+validate(samples_df, "schemas/samples.schema.yaml")
+
+
+# -- Includes ----------------------------------------------------------------
+include: "rules/common.smk"
+include: "rules/scatter.smk"
+include: "rules/mutect2.smk"
+include: "rules/freebayes.smk"
+
+
+# -- Target rule -------------------------------------------------------------
+rule all:
+    localrule: True
+    input:
+        get_final_outputs(),

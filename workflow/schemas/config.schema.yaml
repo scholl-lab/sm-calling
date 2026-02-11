@@ -1,0 +1,89 @@
+$schema: "https://json-schema.org/draft/2020-12/schema"
+description: Configuration for the sm-calling variant calling pipeline.
+
+type: object
+properties:
+  caller:
+    type: string
+    enum: ["mutect2", "freebayes", "all"]
+    description: Which variant caller(s) to run.
+
+  ref:
+    type: object
+    properties:
+      genome:
+        type: string
+        description: Path to reference genome FASTA.
+      build:
+        type: string
+        enum: ["GRCh37", "GRCh38"]
+        description: Reference genome build identifier.
+    required: [genome, build]
+
+  gatk_resources:
+    type: object
+    description: "GATK resource files. Required for Mutect2, optional for FreeBayes-only runs."
+    properties:
+      panel_of_normals:
+        type: string
+      af_only_gnomad:
+        type: string
+      common_biallelic_gnomad:
+        type: string
+    required: [panel_of_normals, af_only_gnomad, common_biallelic_gnomad]
+
+  paths:
+    type: object
+    properties:
+      samples:
+        type: string
+        description: Path to the samples TSV file.
+      bam_folder:
+        type: string
+        description: Directory containing input BAM files.
+      output_folder:
+        type: string
+        description: Root directory for pipeline outputs.
+      log_subdir:
+        type: string
+        default: "logs"
+      intervals_dir:
+        type: string
+        default: "analysis/intervals"
+    required: [samples, bam_folder, output_folder]
+
+  bam:
+    type: object
+    properties:
+      file_extension:
+        type: string
+        default: ".merged.dedup.bqsr.bam"
+    required: [file_extension]
+
+  scatter:
+    type: object
+    properties:
+      mode:
+        type: string
+        enum: ["chromosome", "interval", "none"]
+      count:
+        type: integer
+        minimum: 1
+        default: 400
+      chromosomes:
+        type: array
+        items:
+          type: string
+    required: [mode]
+
+  params:
+    type: object
+    properties:
+      mutect2:
+        type: object
+      freebayes:
+        type: object
+      bcftools_norm:
+        type: object
+
+required: [caller, ref, paths, bam, scatter]

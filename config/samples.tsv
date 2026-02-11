@@ -1,0 +1,4 @@
+sample	tumor_bam	normal_bam	analysis_type
+IND001_To	IND001.tumor	.	tumor_only
+IND002_TN	IND002.tumor	IND002.normal	tumor_normal
+IND003_G	IND003	.	germline
