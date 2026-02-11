@@ -19,38 +19,47 @@ shared-fs-usage:
   - input-output
 
 default-resources:
-  - mem_mb=4000
-  - runtime=120
+  mem_mb: 4000
+  runtime: 120
 
 set-threads:
-  - mutect2_call=4
-  - gather_mutect2_vcfs=4
-  - merge_mutect2_stats=4
-  - learn_read_orientation=4
-  - get_pileup_summaries=4
-  - calculate_contamination=4
-  - filter_mutect_calls=4
-  - freebayes_call=2
-  - merge_freebayes_vcfs=12
-  - scatter_intervals_by_ns=1
-  - split_intervals=4
+  mutect2_call: 4
+  gather_mutect2_vcfs: 4
+  merge_mutect2_stats: 4
+  learn_read_orientation: 4
+  get_pileup_summaries: 4
+  calculate_contamination: 4
+  filter_mutect_calls: 4
+  freebayes_call: 2
+  merge_freebayes_vcfs: 12
+  scatter_intervals_by_ns: 1
+  split_intervals: 4
 
 set-resources:
-  - mutect2_call:mem_mb=17600
-  - mutect2_call:runtime=4320
-  - gather_mutect2_vcfs:mem_mb=17600
-  - gather_mutect2_vcfs:runtime=1440
-  - merge_mutect2_stats:mem_mb=8000
-  - merge_mutect2_stats:runtime=720
-  - learn_read_orientation:mem_mb=17600
-  - learn_read_orientation:runtime=1440
-  - get_pileup_summaries:mem_mb=17600
-  - get_pileup_summaries:runtime=4320
-  - calculate_contamination:mem_mb=17600
-  - calculate_contamination:runtime=1440
-  - filter_mutect_calls:mem_mb=17600
-  - filter_mutect_calls:runtime=1440
-  - freebayes_call:mem_mb=16384
-  - freebayes_call:runtime=4320
-  - merge_freebayes_vcfs:mem_mb=16384
-  - merge_freebayes_vcfs:runtime=1440
+  mutect2_call:
+    mem_mb: 17600
+    runtime: 4320
+  gather_mutect2_vcfs:
+    mem_mb: 17600
+    runtime: 1440
+  merge_mutect2_stats:
+    mem_mb: 8000
+    runtime: 720
+  learn_read_orientation:
+    mem_mb: 17600
+    runtime: 1440
+  get_pileup_summaries:
+    mem_mb: 17600
+    runtime: 4320
+  calculate_contamination:
+    mem_mb: 17600
+    runtime: 1440
+  filter_mutect_calls:
+    mem_mb: 17600
+    runtime: 1440
+  freebayes_call:
+    mem_mb: 16384
+    runtime: 4320
+  merge_freebayes_vcfs:
+    mem_mb: 16384
+    runtime: 1440

@@ -80,17 +80,17 @@ rule merge_freebayes_vcfs:
         bcftools concat \
             -n \
             -Oz \
-            --threads 4 \
+            --threads {threads} \
             {input.vcfs} 2> {log} \
         | bcftools norm \
             {params.norm_extra} \
             -f {REF} \
-            --threads 4 \
+            --threads {threads} \
             - 2>> {log} \
         | bcftools +fill-tags \
             -Oz \
             -o {output.vcf} \
-            --threads 4 \
+            --threads {threads} \
             -W=tbi - -- \
             2>> {log}
         """

@@ -22,6 +22,7 @@ properties:
 
   gatk_resources:
     type: object
+    description: "GATK resource files. Required for Mutect2, optional for FreeBayes-only runs."
     properties:
       panel_of_normals:
         type: string
