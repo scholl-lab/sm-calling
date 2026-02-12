@@ -13,6 +13,7 @@ from generate_config import (
     _build_config_yaml,
     _find_gatk_resource_vcfs,
     _find_genome_fastas,
+    _infer_output_folder,
     build_samples_dataframe,
     discover_bam_files,
     discover_gatk_resources,
@@ -94,6 +95,27 @@ class TestFormatSize:
 
 
 # ---------------------------------------------------------------------------
+# TestInferOutputFolder
+# ---------------------------------------------------------------------------
+
+
+class TestInferOutputFolder:
+    def test_replaces_last_component(self):
+        assert _infer_output_folder("results/exomes/bqsr") == "results/exomes/variant_calls"
+
+    def test_relative_parent(self):
+        assert _infer_output_folder("../results/A5297/bqsr") == "../results/A5297/variant_calls"
+
+    def test_absolute_path(self):
+        result = _infer_output_folder("/data/projects/results/cohort1/bqsr")
+        assert result == "/data/projects/results/cohort1/variant_calls"
+
+    def test_no_backslashes_on_windows(self):
+        result = _infer_output_folder("results\\exomes\\bqsr")
+        assert "\\" not in result
+
+
+# ---------------------------------------------------------------------------
 # TestGuessRole
 # ---------------------------------------------------------------------------
 
@@ -145,9 +167,23 @@ class TestGuessRole:
         role, _ = guess_role("SAMPLE.germline")
         assert role == "normal"
 
+    # Lesion patterns (tumor)
+    def test_suffix_L1(self):
+        role, reason = guess_role("A5297_DNA_01_STREAM_P1_L1")
+        assert role == "tumor"
+        assert "lesion" in reason
+
+    def test_suffix_L(self):
+        role, _ = guess_role("SAMPLE-L")
+        assert role == "tumor"
+
+    def test_suffix_L2(self):
+        role, _ = guess_role("SAMPLE_L2")
+        assert role == "tumor"
+
     # Unknown
     def test_unknown_no_match(self):
-        role, reason = guess_role("A5297_DNA_01_STREAM_P1_L1")
+        role, reason = guess_role("SAMPLE_DNA_01_STREAM_P1")
         assert role == "unknown"
         assert "no pattern" in reason
 
@@ -192,8 +228,11 @@ class TestExtractPatientId:
     def test_strips_N1_suffix(self):
         assert extract_patient_id("A5297_DNA_02_STREAM_P1_N1") == "A5297_DNA_02_STREAM_P1"
 
+    def test_strips_L1_suffix(self):
+        assert extract_patient_id("A5297_DNA_01_STREAM_P1_L1") == "A5297_DNA_01_STREAM_P1"
+
     def test_no_suffix_passthrough(self):
-        assert extract_patient_id("A5297_DNA_01_STREAM_P1_L1") == "A5297_DNA_01_STREAM_P1_L1"
+        assert extract_patient_id("SAMPLE_DNA_01_STREAM_P1") == "SAMPLE_DNA_01_STREAM_P1"
 
     def test_strips_blood_suffix(self):
         assert extract_patient_id("SAMPLE-blood") == "SAMPLE"
@@ -320,10 +359,10 @@ class TestGroupAndPair:
         ]
         _, pairings = group_and_pair(entries)
         assert len(pairings) == 2
-        # One tumor should get the normal, the other should not
+        # Same-patient normal is shared across all tumors from that patient
         normals_used = [p["normal"] for p in pairings if p["normal"] is not None]
-        assert len(normals_used) == 1
-        assert normals_used[0] == "APA1-N"
+        assert len(normals_used) == 2
+        assert all(n == "APA1-N" for n in normals_used)
 
     def test_no_tumors(self):
         entries = [
@@ -444,9 +483,7 @@ class TestGatkResourceDiscovery:
     def test_af_gnomad_excludes_common(self, tmp_path):
         (tmp_path / "af-only-gnomad.hg38.vcf.gz").write_bytes(b"x")
         (tmp_path / "af-only-gnomad.hg38.common_biallelic.vcf.gz").write_bytes(b"x")
-        result = _find_gatk_resource_vcfs(
-            tmp_path, "af_only_gnomad", ["*af-only-gnomad*.vcf*"]
-        )
+        result = _find_gatk_resource_vcfs(tmp_path, "af_only_gnomad", ["*af-only-gnomad*.vcf*"])
         assert len(result) == 1
         # Check the filename only, not the full path (temp dirs may contain "common")
         from pathlib import Path
@@ -559,26 +596,41 @@ class TestBuildConfigYaml:
 
     def test_contains_caller(self, ref_data, gatk_resources):
         content = _build_config_yaml(
-            "mutect2", ref_data, gatk_resources,
-            "/bams", "/output", "config/samples.tsv",
-            ".bam", "chromosome",
+            "mutect2",
+            ref_data,
+            gatk_resources,
+            "/bams",
+            "/output",
+            "config/samples.tsv",
+            ".bam",
+            "chromosome",
         )
         assert 'caller: "mutect2"' in content
 
     def test_contains_ref(self, ref_data, gatk_resources):
         content = _build_config_yaml(
-            "mutect2", ref_data, gatk_resources,
-            "/bams", "/output", "config/samples.tsv",
-            ".bam", "chromosome",
+            "mutect2",
+            ref_data,
+            gatk_resources,
+            "/bams",
+            "/output",
+            "config/samples.tsv",
+            ".bam",
+            "chromosome",
         )
         assert "genome:" in content
         assert "GRCh38" in content
 
     def test_contains_gatk_resources(self, ref_data, gatk_resources):
         content = _build_config_yaml(
-            "mutect2", ref_data, gatk_resources,
-            "/bams", "/output", "config/samples.tsv",
-            ".bam", "chromosome",
+            "mutect2",
+            ref_data,
+            gatk_resources,
+            "/bams",
+            "/output",
+            "config/samples.tsv",
+            ".bam",
+            "chromosome",
         )
         assert "panel_of_normals:" in content
         assert "af_only_gnomad:" in content
@@ -586,9 +638,14 @@ class TestBuildConfigYaml:
 
     def test_contains_scatter(self, ref_data, gatk_resources):
         content = _build_config_yaml(
-            "mutect2", ref_data, gatk_resources,
-            "/bams", "/output", "config/samples.tsv",
-            ".bam", "chromosome",
+            "mutect2",
+            ref_data,
+            gatk_resources,
+            "/bams",
+            "/output",
+            "config/samples.tsv",
+            ".bam",
+            "chromosome",
         )
         assert 'mode: "chromosome"' in content
         assert "chr1" in content
@@ -599,8 +656,11 @@ class TestBuildConfigYaml:
             "mutect2",
             {"genome": "", "build": "GRCh38"},
             {"panel_of_normals": "", "af_only_gnomad": "", "common_biallelic_gnomad": ""},
-            "/bams", "/output", "config/samples.tsv",
-            ".bam", "chromosome",
+            "/bams",
+            "/output",
+            "config/samples.tsv",
+            ".bam",
+            "chromosome",
         )
         assert "EDIT_ME" in content
 
@@ -613,18 +673,33 @@ class TestBuildConfigYaml:
 class TestBuildSamplesDataframe:
     def test_correct_columns(self):
         rows = [
-            {"sample": "S1_TN", "tumor_bam": "S1-T", "normal_bam": "S1-N",
-             "analysis_type": "tumor_normal", "patient_id": "S1"},
+            {
+                "sample": "S1_TN",
+                "tumor_bam": "S1-T",
+                "normal_bam": "S1-N",
+                "analysis_type": "tumor_normal",
+                "patient_id": "S1",
+            },
         ]
         df = build_samples_dataframe(rows)
         assert list(df.columns) == ["sample", "tumor_bam", "normal_bam", "analysis_type"]
 
     def test_sorted_by_sample(self):
         rows = [
-            {"sample": "B_TN", "tumor_bam": "B-T", "normal_bam": "B-N",
-             "analysis_type": "tumor_normal", "patient_id": "B"},
-            {"sample": "A_To", "tumor_bam": "A-T", "normal_bam": ".",
-             "analysis_type": "tumor_only", "patient_id": "A"},
+            {
+                "sample": "B_TN",
+                "tumor_bam": "B-T",
+                "normal_bam": "B-N",
+                "analysis_type": "tumor_normal",
+                "patient_id": "B",
+            },
+            {
+                "sample": "A_To",
+                "tumor_bam": "A-T",
+                "normal_bam": ".",
+                "analysis_type": "tumor_only",
+                "patient_id": "A",
+            },
         ]
         df = build_samples_dataframe(rows)
         assert df.iloc[0]["sample"] == "A_To"
@@ -632,8 +707,13 @@ class TestBuildSamplesDataframe:
 
     def test_dot_sentinel_preserved(self):
         rows = [
-            {"sample": "S1_To", "tumor_bam": "S1-T", "normal_bam": ".",
-             "analysis_type": "tumor_only", "patient_id": "S1"},
+            {
+                "sample": "S1_To",
+                "tumor_bam": "S1-T",
+                "normal_bam": ".",
+                "analysis_type": "tumor_only",
+                "patient_id": "S1",
+            },
         ]
         df = build_samples_dataframe(rows)
         assert df.iloc[0]["normal_bam"] == "."
@@ -747,8 +827,12 @@ class TestEndToEndGeneration:
 class TestWriteSamplesTsv:
     def test_dry_run_no_file(self, tmp_path, capsys):
         df = pd.DataFrame(
-            {"sample": ["S1"], "tumor_bam": ["T1"], "normal_bam": ["."],
-             "analysis_type": ["tumor_only"]}
+            {
+                "sample": ["S1"],
+                "tumor_bam": ["T1"],
+                "normal_bam": ["."],
+                "analysis_type": ["tumor_only"],
+            }
         )
         out = tmp_path / "samples.tsv"
         write_samples_tsv(df, out, dry_run=True)
@@ -757,8 +841,12 @@ class TestWriteSamplesTsv:
 
     def test_writes_file(self, tmp_path):
         df = pd.DataFrame(
-            {"sample": ["S1"], "tumor_bam": ["T1"], "normal_bam": ["."],
-             "analysis_type": ["tumor_only"]}
+            {
+                "sample": ["S1"],
+                "tumor_bam": ["T1"],
+                "normal_bam": ["."],
+                "analysis_type": ["tumor_only"],
+            }
         )
         out = tmp_path / "samples.tsv"
         write_samples_tsv(df, out, force=True)
@@ -769,8 +857,12 @@ class TestWriteSamplesTsv:
 
     def test_creates_parent_dirs(self, tmp_path):
         df = pd.DataFrame(
-            {"sample": ["S1"], "tumor_bam": ["T1"], "normal_bam": ["."],
-             "analysis_type": ["tumor_only"]}
+            {
+                "sample": ["S1"],
+                "tumor_bam": ["T1"],
+                "normal_bam": ["."],
+                "analysis_type": ["tumor_only"],
+            }
         )
         out = tmp_path / "subdir" / "samples.tsv"
         write_samples_tsv(df, out, force=True)
@@ -778,8 +870,12 @@ class TestWriteSamplesTsv:
 
     def test_tsv_format(self, tmp_path):
         df = pd.DataFrame(
-            {"sample": ["S1", "S2"], "tumor_bam": ["T1", "T2"],
-             "normal_bam": [".", "N2"], "analysis_type": ["tumor_only", "tumor_normal"]}
+            {
+                "sample": ["S1", "S2"],
+                "tumor_bam": ["T1", "T2"],
+                "normal_bam": [".", "N2"],
+                "analysis_type": ["tumor_only", "tumor_normal"],
+            }
         )
         out = tmp_path / "samples.tsv"
         write_samples_tsv(df, out, force=True)

@@ -47,8 +47,12 @@ TUMOR_PATTERNS = [
         "suffix '{match}'",
     ),
     (
-        re.compile(r"[._-]T[A-Z]?\d*$"),
+        re.compile(r"[._-]T[A-Z]?\d*$", re.I),
         "suffix '{match}'",
+    ),
+    (
+        re.compile(r"[._-]L\d*$", re.I),
+        "suffix '{match}' (lesion)",
     ),
 ]
 
@@ -59,7 +63,7 @@ NORMAL_PATTERNS = [
         "suffix '{match}'",
     ),
     (
-        re.compile(r"[._-]N\d*$"),
+        re.compile(r"[._-]N\d*$", re.I),
         "suffix '{match}'",
     ),
 ]
@@ -68,7 +72,7 @@ NORMAL_PATTERNS = [
 ROLE_SUFFIX_RE = re.compile(
     r"[._-](?:tumor|tumour|FFPE|met|metastatic|primary|tum|"
     r"normal|blood|buffy|germline|pbmc|ctrl|"
-    r"T[A-Z]?\d*|N\d*)$",
+    r"T[A-Z]?\d*|N\d*|L\d*)$",
     re.I,
 )
 
@@ -174,6 +178,23 @@ def format_size(size_bytes: int) -> str:
     if size_bytes >= 1_000:
         return f"{size_bytes / 1_000:.1f} KB"
     return f"{size_bytes} B"
+
+
+def _infer_output_folder(bam_folder: str) -> str:
+    """Infer output folder from BAM folder path.
+
+    Replaces the last path component with 'variant_calls'.
+    E.g., '../results/A5297/bqsr' -> '../results/A5297/variant_calls'
+          'results/exomes/bqsr'   -> 'results/exomes/variant_calls'
+
+    Args:
+        bam_folder: Path to the input BAM directory.
+
+    Returns:
+        Inferred output folder path string.
+    """
+    bam_path = Path(bam_folder)
+    return str(bam_path.parent / "variant_calls").replace("\\", "/")
 
 
 # ---------------------------------------------------------------------------
@@ -285,26 +306,20 @@ def group_and_pair(bam_entries: list[dict]) -> tuple[dict[str, dict[str, list[st
     used_normals: set[str] = set()
 
     # All normals (for cross-patient fallback)
-    all_normals = [
-        e["basename"] for e in bam_entries if e.get("role") == "normal"
-    ]
+    all_normals = [e["basename"] for e in bam_entries if e.get("role") == "normal"]
 
     for pid, group in patient_groups.items():
         for tumor in group["tumors"]:
-            # Try same-patient normals first
+            # Try same-patient normals first (allow reuse within same patient)
             normal = None
-            for n in group["normals"]:
-                if n not in used_normals:
-                    normal = n
-                    break
-
-            # If no same-patient normal, try cross-patient via similarity
-            if normal is None:
+            if group["normals"]:
+                normal = group["normals"][0]
+            else:
+                # Cross-patient fallback via similarity (no reuse)
                 remaining = [n for n in all_normals if n not in used_normals]
                 normal = find_best_normal(tumor, remaining, patient_groups)
-
-            if normal is not None:
-                used_normals.add(normal)
+                if normal is not None:
+                    used_normals.add(normal)
 
             pairings.append(
                 {
@@ -842,9 +857,7 @@ def print_samples_table(df: pd.DataFrame) -> None:
 
     # Rows
     for i, (_, row) in enumerate(df.iterrows(), 1):
-        line = f"  {i:<3} " + "  ".join(
-            str(row[col]).ljust(col_widths[col]) for col in df.columns
-        )
+        line = f"  {i:<3} " + "  ".join(str(row[col]).ljust(col_widths[col]) for col in df.columns)
         print(line)
 
     # Summary
@@ -968,9 +981,11 @@ def prompt_unresolved_roles(bam_entries: list[dict]) -> list[dict]:
     for entry in unknowns:
         size = format_size(entry["size_bytes"])
         while True:
-            raw = input(
-                f"  {entry['basename']} ({size}) -- T(umor) / N(ormal) / S(kip)? "
-            ).strip().upper()
+            raw = (
+                input(f"  {entry['basename']} ({size}) -- T(umor) / N(ormal) / S(kip)? ")
+                .strip()
+                .upper()
+            )
             if raw in ("T", "TUMOR"):
                 entry["role"] = "tumor"
                 entry["reason"] = "manual"
@@ -1039,6 +1054,19 @@ def _edit_row(df: pd.DataFrame, row_idx: int, bam_entries: list[dict]) -> pd.Dat
             types = ["tumor_only", "tumor_normal", "germline"]
             new_type = _prompt_choice("Analysis type", types, default=row["analysis_type"])
             df.at[df.index[row_idx], "analysis_type"] = new_type
+            # Regenerate sample name to match new analysis type
+            tumor_bam = df.at[df.index[row_idx], "tumor_bam"]
+            pid = extract_patient_id(tumor_bam)
+            new_name = generate_sample_name(pid, new_type, 0, 1)
+            # Ensure uniqueness
+            existing = set(df["sample"]) - {df.at[df.index[row_idx], "sample"]}
+            suffix_idx = 2
+            base_name = new_name
+            while new_name in existing:
+                new_name = f"{base_name}_{suffix_idx}"
+                suffix_idx += 1
+            df.at[df.index[row_idx], "sample"] = new_name
+            print(f"  Updated sample name: {new_name}")
         elif choice == "4":
             df = df.drop(df.index[row_idx]).reset_index(drop=True)
             print("  Row deleted.")
@@ -1109,9 +1137,7 @@ def interactive_mode() -> None:
     print()
 
     # Phase 1: Scan + Propose
-    bam_folder = _prompt_path(
-        "BAM folder", default="results/exomes/bqsr"
-    )
+    bam_folder = _prompt_path("BAM folder", default="results/exomes/bqsr")
     bam_ext = _prompt("BAM extension", default=DEFAULT_BAM_EXTENSION)
 
     bam_entries = discover_bam_files(bam_folder, bam_ext)
@@ -1160,29 +1186,16 @@ def interactive_mode() -> None:
     samples_output = _prompt("Output samples.tsv", default="config/samples.tsv")
     gen_config = _prompt_yn("Also generate config.yaml?", default=True)
 
-    caller = "mutect2"
-    scatter_mode = "chromosome"
-    ref_data: dict[str, Any] = {"genome": "", "build": "GRCh38", "search_log": []}
-    gatk_resources: dict[str, Any] = {
-        "panel_of_normals": "",
-        "af_only_gnomad": "",
-        "common_biallelic_gnomad": "",
-        "search_log": [],
-    }
-    config_output = "config/config.yaml"
-
     if gen_config:
         config_output = _prompt("Output config.yaml path", default="config/config.yaml")
-        caller = _prompt_choice(
-            "Caller", ["mutect2", "freebayes", "all"], default="mutect2"
-        )
+        caller = _prompt_choice("Caller", ["mutect2", "freebayes", "all"], default="mutect2")
         scatter_mode = _prompt_choice(
             "Scatter mode", ["chromosome", "interval", "none"], default="chromosome"
         )
 
         # Reference data discovery
         print("\nScanning for reference data...")
-        project_root = Path(bam_folder).resolve().parent
+        project_root = Path.cwd()
         ref_dir_str = _prompt_path(
             "  Reference data directory (leave empty to auto-scan)",
             must_exist=False,
@@ -1208,9 +1221,10 @@ def interactive_mode() -> None:
     write_samples_tsv(df, output_path)
 
     if gen_config:
+        default_output = _infer_output_folder(bam_folder)
         output_folder = _prompt(
             "Output folder for pipeline results",
-            default="results/exomes/variant_calls",
+            default=default_output,
         )
         generate_config_template(
             config_output=Path(config_output),
@@ -1287,6 +1301,11 @@ Examples:
         help="GATK resource VCF directory",
     )
     parser.add_argument(
+        "--output-dir",
+        help="Pipeline output directory (default: inferred from --bam-folder by replacing "
+        "the last path component with 'variant_calls')",
+    )
+    parser.add_argument(
         "--scatter-mode",
         choices=["chromosome", "interval", "none"],
         default="chromosome",
@@ -1340,7 +1359,9 @@ Examples:
             f"Warning: {len(unknowns)} BAM(s) with unrecognized role: {unknown_names}",
             file=sys.stderr,
         )
-        print("  These will be skipped. Use interactive mode for manual assignment.", file=sys.stderr)
+        print(
+            "  These will be skipped. Use interactive mode for manual assignment.", file=sys.stderr
+        )
         # In CLI mode, skip unknowns
         for e in unknowns:
             e["role"] = "skip"
@@ -1379,7 +1400,7 @@ Examples:
     if args.config_template:
         ref_dir = Path(args.ref_dir).resolve() if args.ref_dir else None
         gatk_dir = Path(args.gatk_resource_dir).resolve() if args.gatk_resource_dir else None
-        project_root = bam_folder.parent
+        project_root = Path.cwd()
 
         print("Scanning for reference data...")
         ref_data = discover_reference_data(ref_dir, project_root)
@@ -1392,13 +1413,14 @@ Examples:
             print(line)
         print()
 
+        output_folder = args.output_dir or _infer_output_folder(str(bam_folder))
         generate_config_template(
             config_output=Path(args.config_output),
             caller=args.caller,
             ref_data=ref_data,
             gatk_resources=gatk_resources,
             bam_folder=str(bam_folder),
-            output_folder="results/exomes/variant_calls",
+            output_folder=output_folder,
             samples_path=args.output,
             bam_extension=args.bam_extension,
             scatter_mode=args.scatter_mode,

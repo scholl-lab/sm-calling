@@ -166,6 +166,7 @@ python scripts/generate_config.py --bam-folder /path/to/bams --force
 | `--output PATH` | `config/samples.tsv` | Output samples.tsv path |
 | `--config-template` | off | Also generate config.yaml |
 | `--config-output PATH` | `config/config.yaml` | Config.yaml output path |
+| `--output-dir PATH` | *(inferred)* | Pipeline output directory (default: BAM folder parent + `variant_calls`) |
 | `--ref-dir PATH` | *(auto-scan)* | Reference genome directory |
 | `--gatk-resource-dir PATH` | *(auto-scan)* | GATK resource VCF directory |
 | `--scatter-mode MODE` | `chromosome` | `chromosome`, `interval`, `none` |
@@ -188,9 +189,10 @@ The script recognizes tumor and normal BAMs by filename suffix:
 |---------|--------------|----------|
 | `-T`, `-T1`, `_TS` | tumor | `SAMPLE01-T`, `SAMPLE-T1` |
 | `_tumor`, `.FFPE`, `-met`, `_primary` | tumor | `S1_tumor`, `S1.FFPE` |
+| `-L`, `-L1`, `_L2` | tumor (lesion) | `SAMPLE_P1_L1`, `SAMPLE-L` |
 | `-N`, `-N1` | normal | `SAMPLE01-N`, `SAMPLE_P1_N1` |
 | `_normal`, `-blood`, `_germline`, `.pbmc` | normal | `S1_normal`, `S1-blood` |
-| *(no match)* | unknown (prompted) | `SAMPLE_DNA_01_STREAM_P1_L1` |
+| *(no match)* | unknown (prompted) | `SAMPLE_DNA_01_STREAM` |
 
 Pairing uses patient ID extraction (strip role suffix) first, then falls back to string similarity for complex names.
 
@@ -318,9 +320,9 @@ The launcher auto-detects whether you're on BIH HPC or Charite HPC:
 
 | Cluster | Detection | Behavior |
 |---------|-----------|----------|
-| **BIH HPC** | `cubi-v1` profile exists | `--profile profiles/bih` |
-| **Charite HPC** | `/etc/profile.d/conda.sh` exists | `--profile profiles/charite`, partition overrides for long jobs |
-| **Other/local** | Fallback | `--profile profiles/local` |
+| **BIH HPC** | `/etc/xdg/snakemake/cubi-v1` exists or hostname matches `cubi`/`bihealth` | `--profile profiles/bih` |
+| **Charite HPC** | `/etc/profile.d/conda.sh` exists or hostname matches `charite`/`.sc-` | `--profile profiles/charite`, partition overrides for long jobs |
+| **Other/local** | Fallback if neither BIH nor Charite is detected | `--profile profiles/local` |
 
 ### Usage examples
 
