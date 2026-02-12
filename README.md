@@ -2,9 +2,33 @@
 
 Snakemake 8+ variant calling pipeline for somatic (Mutect2) and germline (FreeBayes) analysis on SLURM HPC clusters.
 
-**Analysis-ready BAMs → scatter → call → gather → filter → VCF → QC**
+```mermaid
+flowchart LR
+    BAM["Analysis-ready\nBAMs"]
+    SCATTER["Scatter\nintervals"]
 
-Optional: **PureCN** copy number / purity analysis on Mutect2 output.
+    M_CALL["Mutect2\ncall"]
+    M_GATHER["Gather VCFs +\nmerge stats +\norientation model"]
+    M_CONTAM["Pileup summaries\n+ contamination"]
+    M_FILTER["Filter\ncalls"]
+    M_VCF["Filtered\nsomatic VCF"]
+
+    F_CALL["FreeBayes\ncall"]
+    F_MERGE["Merge +\nnormalize"]
+    F_VCF["Germline\nVCF"]
+
+    QC["bcftools stats\n+ MultiQC"]
+    PURECN["PureCN\npurity / ploidy / CN"]
+
+    BAM --> SCATTER
+    SCATTER --> M_CALL --> M_GATHER --> M_FILTER --> M_VCF --> QC
+    SCATTER --> F_CALL --> F_MERGE --> F_VCF --> QC
+    BAM --> M_CONTAM --> M_FILTER
+
+    M_VCF -.->|optional| PURECN
+
+    style PURECN stroke-dasharray: 5 5
+```
 
 Supports both **BIH HPC** and **Charite HPC** (auto-detected), plus local execution.
 
