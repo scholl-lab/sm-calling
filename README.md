@@ -97,13 +97,12 @@ python scripts/generate_config.py
 BAM folder [results/exomes/bqsr]: /data/bams
 BAM extension [.merged.dedup.bqsr.bam]:
 
-Found 4 BAMs:
+Found 3 BAMs:
 
-  #  Basename                         Size      Role     Reason
-  1  A5297_DNA_01_STREAM_P1_L1       45.3 GB   ?        (no pattern matched)
-  2  A5297_DNA_02_STREAM_P1_N1       19.2 GB   normal   suffix '_N1'
-  3  APA1-T                           8.1 GB   tumor    suffix '-T'
-  4  APA1-N                           4.2 GB   normal   suffix '-N'
+  #  Basename              Size      Role     Reason
+  1  SAMPLE01-T           45.3 GB   tumor    suffix '-T'
+  2  SAMPLE01-N           19.2 GB   normal   suffix '-N'
+  3  SAMPLE02_tumor        8.1 GB   tumor    suffix '_tumor'
 ```
 
 The wizard has three phases:
@@ -187,11 +186,11 @@ The script recognizes tumor and normal BAMs by filename suffix:
 
 | Pattern | Detected role | Examples |
 |---------|--------------|----------|
-| `-T`, `-T1`, `_TS` | tumor | `APA1-T`, `SAMPLE-T1` |
+| `-T`, `-T1`, `_TS` | tumor | `SAMPLE01-T`, `SAMPLE-T1` |
 | `_tumor`, `.FFPE`, `-met`, `_primary` | tumor | `S1_tumor`, `S1.FFPE` |
-| `-N`, `-N1` | normal | `APA1-N`, `A5297_P1_N1` |
+| `-N`, `-N1` | normal | `SAMPLE01-N`, `SAMPLE_P1_N1` |
 | `_normal`, `-blood`, `_germline`, `.pbmc` | normal | `S1_normal`, `S1-blood` |
-| *(no match)* | unknown (prompted) | `A5297_DNA_01_STREAM_P1_L1` |
+| *(no match)* | unknown (prompted) | `SAMPLE_DNA_01_STREAM_P1_L1` |
 
 Pairing uses patient ID extraction (strip role suffix) first, then falls back to string similarity for complex names.
 
