@@ -37,9 +37,7 @@ rule bcftools_stats_freebayes:
         vcf=os.path.join(FREEBAYES_DIR, "final_merged.vcf.gz"),
         ref=REF,
     output:
-        stats=os.path.join(
-            QC_DIR, "bcftools_stats", "freebayes", "all_samples.stats.txt"
-        ),
+        stats=os.path.join(QC_DIR, "bcftools_stats", "freebayes", "all_samples.stats.txt"),
     params:
         extra=BCFTOOLS_STATS_EXTRA,
     conda:
@@ -67,8 +65,6 @@ rule multiqc:
     output:
         html=os.path.join(QC_DIR, "multiqc_report.html"),
         data=directory(os.path.join(QC_DIR, "multiqc_data")),
-    params:
-        use_input_files_only=True,
     conda:
         "../envs/multiqc.yaml"
     log:
@@ -77,7 +73,6 @@ rule multiqc:
         r"""
         multiqc \
             --force \
-            --no-data-dir \
             --outdir $(dirname {output.html}) \
             --filename $(basename {output.html}) \
             {input.stats} \
