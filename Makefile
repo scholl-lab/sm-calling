@@ -15,7 +15,7 @@ SHELL := /bin/bash
 .DEFAULT_GOAL := help
 
 # --- File sets ---------------------------------------------------------------
-PY_FILES   := workflow/rules/helpers.py
+PY_FILES   := workflow/rules/helpers.py scripts/generate_config.py
 SMK_FILES  := workflow/rules/*.smk workflow/Snakefile
 SH_FILES   := scripts/run_snakemake.sh
 
