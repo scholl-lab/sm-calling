@@ -58,6 +58,44 @@ class TestConfigSchema:
             jsonschema.validate(broken, config_schema)
 
 
+    def test_mutect2_genotype_germline_sites_boolean(self, config_dict, config_schema):
+        cfg = copy.deepcopy(config_dict)
+        cfg["params"]["mutect2"]["genotype_germline_sites"] = True
+        jsonschema.validate(cfg, config_schema)
+
+    def test_mutect2_genotype_germline_sites_rejects_string(
+        self, config_dict, config_schema
+    ):
+        cfg = copy.deepcopy(config_dict)
+        cfg["params"]["mutect2"]["genotype_germline_sites"] = "yes"
+        with pytest.raises(jsonschema.ValidationError):
+            jsonschema.validate(cfg, config_schema)
+
+    def test_mutect2_annotations_array(self, config_dict, config_schema):
+        cfg = copy.deepcopy(config_dict)
+        cfg["params"]["mutect2"]["annotations"] = [
+            "OrientationBiasReadCounts",
+            "StrandBiasBySample",
+        ]
+        jsonschema.validate(cfg, config_schema)
+
+    def test_purecn_enabled_boolean(self, config_dict, config_schema):
+        cfg = copy.deepcopy(config_dict)
+        cfg["purecn"] = {"enabled": True, "genome": "hg38"}
+        jsonschema.validate(cfg, config_schema)
+
+    def test_purecn_genome_validates_enum(self, config_dict, config_schema):
+        cfg = copy.deepcopy(config_dict)
+        cfg["purecn"] = {"enabled": True, "genome": "invalid"}
+        with pytest.raises(jsonschema.ValidationError):
+            jsonschema.validate(cfg, config_schema)
+
+    def test_purecn_seed_integer(self, config_dict, config_schema):
+        cfg = copy.deepcopy(config_dict)
+        cfg["purecn"] = {"enabled": False, "genome": "hg38", "seed": 42}
+        jsonschema.validate(cfg, config_schema)
+
+
 @pytest.mark.skipif(jsonschema is None, reason="jsonschema not installed")
 class TestSamplesSchema:
     def test_valid_sample(self, samples_schema):

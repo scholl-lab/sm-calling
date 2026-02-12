@@ -62,6 +62,41 @@ def get_scatter_units(
         return ["all"]
 
 
+def build_mutect2_extra_args(
+    genotype_germline_sites: bool = True,
+    genotype_pon_sites: bool = True,
+    annotations: list[str] | None = None,
+    annotation_groups: list[str] | None = None,
+    extra: str = "",
+) -> str:
+    """Build the complete Mutect2 extra arguments string.
+
+    Combines dedicated config fields with the passthrough ``extra`` string.
+    """
+    args: list[str] = []
+    if genotype_germline_sites:
+        args.append("--genotype-germline-sites true")
+    if genotype_pon_sites:
+        args.append("--genotype-pon-sites true")
+    for ann in annotations or []:
+        args.append(f"--annotation {ann}")
+    for grp in annotation_groups or []:
+        args.append(f"--annotation-group {grp}")
+    if extra:
+        args.append(extra)
+    return " ".join(args)
+
+
+def get_normal_bam_basenames(samples_df: pd.DataFrame) -> list[str]:
+    """Return sorted basenames of all normal BAMs (for NormalDB)."""
+    normals: set[str] = set()
+    for _, row in samples_df.iterrows():
+        normal = row.get("normal_bam", "")
+        if normal and normal != "." and pd.notna(normal):
+            normals.add(normal)
+    return sorted(normals)
+
+
 def build_freebayes_params(extra: str) -> str:
     """Return the FreeBayes extra params string (passthrough from config)."""
     return extra

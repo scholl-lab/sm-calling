@@ -61,8 +61,29 @@ scatter:
 # --- Tool-specific parameters (passthrough) ---
 params:
   mutect2:
-    extra: "--genotype-germline-sites true --genotype-pon-sites true"
+    # PureCN-compatible defaults (emit germline + PoN sites)
+    genotype_germline_sites: true
+    genotype_pon_sites: true
+    # Optional: additional Mutect2 annotations
+    annotations: []
+    annotation_groups: []
+    # Passthrough for any other Mutect2 flags
+    extra: ""
   freebayes:
     extra: "--min-coverage 20 --limit-coverage 500 --use-best-n-alleles 4 --standard-filters"
   bcftools_norm:
     extra: "-m-any --force -a --atom-overlaps ."
+  bcftools_stats:
+    extra: ""
+
+# --- PureCN settings (optional, for copy number analysis) ---
+purecn:
+  enabled: false  # opt-in, not everyone needs CN analysis
+  genome: "hg38"  # hg19 | hg38
+  intervals_bed: ""  # BED file with capture bait coordinates
+  normaldb: ""  # Pre-built normalDB.rds (skip NormalDB.R if provided)
+  mapping_bias: ""  # Pre-built mapping_bias.rds
+  snp_blacklist: ""  # Optional: simple repeats BED for SNP filtering
+  extra: ""  # Extra PureCN.R arguments
+  seed: 123
+  postoptimize: true

@@ -32,7 +32,7 @@ rule mutect2_call:
         normal_arg=get_normal_name,
         interval_arg=get_interval_arg,
         java_opts=get_java_opts,
-        extra=MUTECT2_EXTRA,
+        extra=MUTECT2_ALL_ARGS,
     retries: 2
     resources:
         mem_mb=lambda wildcards, attempt: 17600 * attempt,

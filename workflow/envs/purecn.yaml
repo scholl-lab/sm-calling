@@ -1,0 +1,6 @@
+channels:
+  - conda-forge
+  - bioconda
+dependencies:
+  - bioconductor-purecn=2.12.0
+  - r-optparse=1.7.5

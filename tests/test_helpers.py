@@ -8,9 +8,11 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "workflow", "ru
 
 from helpers import (
     build_freebayes_params,
+    build_mutect2_extra_args,
     get_germline_samples,
     get_java_opts,
     get_mutect2_samples,
+    get_normal_bam_basenames,
     get_scatter_units,
     get_unique_bam_basenames,
     has_matched_normal,
@@ -98,6 +100,82 @@ class TestGetScatterUnits:
 
     def test_chromosome_mode_empty(self):
         result = get_scatter_units("chromosome", None)
+        assert result == []
+
+
+class TestBuildMutect2ExtraArgs:
+    def test_defaults(self):
+        result = build_mutect2_extra_args()
+        assert "--genotype-germline-sites true" in result
+        assert "--genotype-pon-sites true" in result
+
+    def test_disabled(self):
+        result = build_mutect2_extra_args(
+            genotype_germline_sites=False,
+            genotype_pon_sites=False,
+        )
+        assert result == ""
+
+    def test_annotations(self):
+        result = build_mutect2_extra_args(
+            genotype_germline_sites=False,
+            genotype_pon_sites=False,
+            annotations=["OrientationBiasReadCounts", "StrandBiasBySample"],
+            annotation_groups=["AS_StandardAnnotation"],
+        )
+        assert "--annotation OrientationBiasReadCounts" in result
+        assert "--annotation StrandBiasBySample" in result
+        assert "--annotation-group AS_StandardAnnotation" in result
+
+    def test_with_extra(self):
+        result = build_mutect2_extra_args(
+            genotype_germline_sites=True,
+            genotype_pon_sites=False,
+            extra="--max-reads-per-alignment-start 50",
+        )
+        assert "--genotype-germline-sites true" in result
+        assert "--genotype-pon-sites" not in result
+        assert "--max-reads-per-alignment-start 50" in result
+
+    def test_all_combined(self):
+        result = build_mutect2_extra_args(
+            genotype_germline_sites=True,
+            genotype_pon_sites=True,
+            annotations=["OrientationBiasReadCounts"],
+            annotation_groups=["AS_StandardAnnotation"],
+            extra="--custom-flag",
+        )
+        parts = result.split()
+        # Verify ordering: germline, pon, annotations, annotation-groups, extra
+        germline_idx = parts.index("--genotype-germline-sites")
+        pon_idx = parts.index("--genotype-pon-sites")
+        ann_idx = parts.index("--annotation")
+        grp_idx = parts.index("--annotation-group")
+        custom_idx = parts.index("--custom-flag")
+        assert germline_idx < pon_idx < ann_idx < grp_idx < custom_idx
+
+
+class TestGetNormalBamBasenames:
+    def test_extracts_normals(self, samples_df):
+        result = get_normal_bam_basenames(samples_df)
+        assert result == ["IND002.normal"]
+
+    def test_ignores_dots(self, samples_df):
+        result = get_normal_bam_basenames(samples_df)
+        assert "." not in result
+
+    def test_empty_when_no_normals(self):
+        import pandas as pd
+
+        df = pd.DataFrame(
+            {
+                "sample": ["S1"],
+                "tumor_bam": ["S1.tumor"],
+                "normal_bam": ["."],
+                "analysis_type": ["tumor_only"],
+            }
+        ).set_index("sample", drop=False)
+        result = get_normal_bam_basenames(df)
         assert result == []
 
 
