@@ -664,6 +664,83 @@ class TestBuildConfigYaml:
         )
         assert "EDIT_ME" in content
 
+    def test_purecn_disabled_by_default(self, ref_data, gatk_resources):
+        content = _build_config_yaml(
+            "mutect2",
+            ref_data,
+            gatk_resources,
+            "/bams",
+            "/output",
+            "config/samples.tsv",
+            ".bam",
+            "chromosome",
+        )
+        assert "enabled: false" in content
+
+    def test_purecn_enabled(self, ref_data, gatk_resources):
+        content = _build_config_yaml(
+            "mutect2",
+            ref_data,
+            gatk_resources,
+            "/bams",
+            "/output",
+            "config/samples.tsv",
+            ".bam",
+            "chromosome",
+            purecn_enabled=True,
+            purecn_genome="hg38",
+            purecn_intervals_bed="/beds/targets.bed",
+        )
+        assert "enabled: true" in content
+        assert 'genome: "hg38"' in content
+        assert "targets.bed" in content
+
+    def test_purecn_with_normaldb(self, ref_data, gatk_resources):
+        content = _build_config_yaml(
+            "mutect2",
+            ref_data,
+            gatk_resources,
+            "/bams",
+            "/output",
+            "config/samples.tsv",
+            ".bam",
+            "chromosome",
+            purecn_enabled=True,
+            purecn_normaldb="/purecn/normalDB.rds",
+            purecn_mapping_bias="/purecn/mapping_bias.rds",
+        )
+        assert "normalDB.rds" in content
+        assert "mapping_bias.rds" in content
+
+    def test_mutect2_dedicated_fields(self, ref_data, gatk_resources):
+        content = _build_config_yaml(
+            "mutect2",
+            ref_data,
+            gatk_resources,
+            "/bams",
+            "/output",
+            "config/samples.tsv",
+            ".bam",
+            "chromosome",
+        )
+        assert "genotype_germline_sites: true" in content
+        assert "genotype_pon_sites: true" in content
+        assert "annotations: []" in content
+        assert "annotation_groups: []" in content
+
+    def test_bcftools_stats_section(self, ref_data, gatk_resources):
+        content = _build_config_yaml(
+            "mutect2",
+            ref_data,
+            gatk_resources,
+            "/bams",
+            "/output",
+            "config/samples.tsv",
+            ".bam",
+            "chromosome",
+        )
+        assert "bcftools_stats:" in content
+
 
 # ---------------------------------------------------------------------------
 # TestBuildSamplesDataframe

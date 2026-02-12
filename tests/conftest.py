@@ -47,8 +47,15 @@ def config_dict():
             + ["chrX", "chrY", "chrM"],
         },
         "params": {
-            "mutect2": {"extra": "--genotype-germline-sites true"},
+            "mutect2": {
+                "genotype_germline_sites": True,
+                "genotype_pon_sites": True,
+                "annotations": [],
+                "annotation_groups": [],
+                "extra": "",
+            },
             "freebayes": {"extra": "--min-coverage 20"},
             "bcftools_norm": {"extra": "-m-any --force"},
+            "bcftools_stats": {"extra": ""},
         },
     }

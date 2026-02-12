@@ -4,7 +4,6 @@
 # a separate --profile (e.g., profiles/bih/ or profiles/charite/).
 
 latency-wait: 60
-jobs: 20
 rerun-incomplete: true
 printshellcmds: true
 software-deployment-method:
@@ -34,6 +33,12 @@ set-threads:
   merge_freebayes_vcfs: 12
   scatter_intervals_by_ns: 1
   split_intervals: 4
+  bcftools_stats_mutect2: 1
+  bcftools_stats_freebayes: 1
+  multiqc: 1
+  purecn_coverage: 1
+  purecn_normaldb: 1
+  purecn_run: 1
 
 set-resources:
   mutect2_call:
@@ -63,3 +68,21 @@ set-resources:
   merge_freebayes_vcfs:
     mem_mb: 16384
     runtime: 1440
+  bcftools_stats_mutect2:
+    mem_mb: 4000
+    runtime: 120
+  bcftools_stats_freebayes:
+    mem_mb: 4000
+    runtime: 120
+  multiqc:
+    mem_mb: 4000
+    runtime: 120
+  purecn_coverage:
+    mem_mb: 8000
+    runtime: 720
+  purecn_normaldb:
+    mem_mb: 16384
+    runtime: 1440
+  purecn_run:
+    mem_mb: 16384
+    runtime: 2880

@@ -81,9 +81,80 @@ properties:
     properties:
       mutect2:
         type: object
+        properties:
+          genotype_germline_sites:
+            type: boolean
+            default: true
+            description: "Emit germline sites (required for PureCN)."
+          genotype_pon_sites:
+            type: boolean
+            default: true
+            description: "Emit PoN sites (required for PureCN)."
+          annotations:
+            type: array
+            items:
+              type: string
+            default: []
+            description: "Extra --annotation flags for Mutect2."
+          annotation_groups:
+            type: array
+            items:
+              type: string
+            default: []
+            description: "Extra --annotation-group flags for Mutect2."
+          extra:
+            type: string
+            default: ""
       freebayes:
         type: object
       bcftools_norm:
         type: object
+      bcftools_stats:
+        type: object
+        properties:
+          extra:
+            type: string
+            default: ""
+
+  purecn:
+    type: object
+    properties:
+      enabled:
+        type: boolean
+        default: false
+        description: "Enable PureCN copy number analysis."
+      genome:
+        type: string
+        enum: ["hg19", "hg38"]
+        default: "hg38"
+        description: "PureCN genome identifier."
+      intervals_bed:
+        type: string
+        default: ""
+        description: "BED file with capture bait coordinates."
+      normaldb:
+        type: string
+        default: ""
+        description: "Pre-built normalDB.rds (skip NormalDB.R if provided)."
+      mapping_bias:
+        type: string
+        default: ""
+        description: "Pre-built mapping_bias.rds."
+      snp_blacklist:
+        type: string
+        default: ""
+        description: "Optional simple repeats BED for SNP filtering."
+      extra:
+        type: string
+        default: ""
+        description: "Extra PureCN.R arguments."
+      seed:
+        type: integer
+        default: 123
+        description: "Random seed for PureCN."
+      postoptimize:
+        type: boolean
+        default: true
+        description: "Run PureCN post-optimization."
 
 required: [caller, ref, paths, bam, scatter]

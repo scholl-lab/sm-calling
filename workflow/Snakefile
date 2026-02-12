@@ -25,6 +25,32 @@ include: "rules/common.smk"
 include: "rules/scatter.smk"
 include: "rules/mutect2.smk"
 include: "rules/freebayes.smk"
+include: "rules/qc.smk"
+include: "rules/purecn.smk"
+
+
+# -- Validation --------------------------------------------------------------
+if PURECN_ENABLED and CALLER in ("mutect2", "all"):
+    if not PURECN_INTERVALS_BED:
+        raise ValueError(
+            "PureCN is enabled but 'purecn.intervals_bed' is not set. "
+            "Provide a BED file with capture bait coordinates."
+        )
+    if not get_normal_bams():
+        if not PURECN_NORMALDB:
+            raise ValueError(
+                "PureCN is enabled but no normal BAMs found in samples.tsv "
+                "and no pre-built normalDB provided (purecn.normaldb). "
+                "Either add normal BAMs to your sample sheet or provide a "
+                "pre-built normalDB.rds via the purecn.normaldb config field."
+            )
+        if not PURECN_MAPPING_BIAS:
+            raise ValueError(
+                "PureCN is enabled with a pre-built normalDB but no "
+                "mapping_bias file provided (purecn.mapping_bias). "
+                "When using a pre-built normalDB without normal BAMs, "
+                "you must also provide the matching mapping_bias.rds file."
+            )
 
 
 # -- Target rule -------------------------------------------------------------

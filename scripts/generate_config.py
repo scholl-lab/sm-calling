@@ -639,6 +639,11 @@ def _build_config_yaml(
     samples_path: str,
     bam_extension: str,
     scatter_mode: str,
+    purecn_enabled: bool = False,
+    purecn_genome: str = "hg38",
+    purecn_intervals_bed: str = "",
+    purecn_normaldb: str = "",
+    purecn_mapping_bias: str = "",
 ) -> str:
     """Build config.yaml content matching config.schema.yaml.
 
@@ -653,6 +658,11 @@ def _build_config_yaml(
         samples_path: Path to samples.tsv.
         bam_extension: BAM file extension.
         scatter_mode: Scatter mode (chromosome/interval/none).
+        purecn_enabled: Whether to enable PureCN.
+        purecn_genome: PureCN genome identifier (hg19/hg38).
+        purecn_intervals_bed: Path to capture bait BED file.
+        purecn_normaldb: Path to pre-built normalDB.rds.
+        purecn_mapping_bias: Path to pre-built mapping_bias.rds.
 
     Returns:
         YAML config file content as a string.
@@ -674,9 +684,14 @@ def _build_config_yaml(
     af_gnomad = _resolve_path(af_gnomad)
     common_gnomad = _resolve_path(common_gnomad)
     bam_folder = _resolve_path(bam_folder)
+    purecn_intervals_bed = _resolve_path(purecn_intervals_bed)
+    purecn_normaldb = _resolve_path(purecn_normaldb)
+    purecn_mapping_bias = _resolve_path(purecn_mapping_bias)
 
     # Build chromosomes list
     chrom_lines = "\n".join(f'    - "{c}"' for c in DEFAULT_CHROMOSOMES)
+
+    purecn_enabled_str = "true" if purecn_enabled else "false"
 
     return f"""\
 # sm-calling unified configuration
@@ -716,14 +731,32 @@ scatter:
   chromosomes:
 {chrom_lines}
 
-# --- Tool-specific parameters (passthrough) ---
+# --- Tool-specific parameters ---
 params:
   mutect2:
-    extra: "--genotype-germline-sites true --genotype-pon-sites true"
+    genotype_germline_sites: true
+    genotype_pon_sites: true
+    annotations: []
+    annotation_groups: []
+    extra: ""
   freebayes:
     extra: "--min-coverage 20 --limit-coverage 500 --use-best-n-alleles 4 --standard-filters"
   bcftools_norm:
     extra: "-m-any --force -a --atom-overlaps ."
+  bcftools_stats:
+    extra: ""
+
+# --- PureCN settings (optional, for copy number analysis) ---
+purecn:
+  enabled: {purecn_enabled_str}
+  genome: "{purecn_genome}"
+  intervals_bed: "{purecn_intervals_bed}"
+  normaldb: "{purecn_normaldb}"
+  mapping_bias: "{purecn_mapping_bias}"
+  snp_blacklist: ""
+  extra: ""
+  seed: 123
+  postoptimize: true
 """
 
 
@@ -739,6 +772,11 @@ def generate_config_template(
     scatter_mode: str,
     dry_run: bool = False,
     force: bool = False,
+    purecn_enabled: bool = False,
+    purecn_genome: str = "hg38",
+    purecn_intervals_bed: str = "",
+    purecn_normaldb: str = "",
+    purecn_mapping_bias: str = "",
 ) -> None:
     """Write config.yaml with overwrite protection.
 
@@ -754,6 +792,11 @@ def generate_config_template(
         scatter_mode: Scatter mode.
         dry_run: If True, print but don't write.
         force: If True, overwrite without asking.
+        purecn_enabled: Whether to enable PureCN.
+        purecn_genome: PureCN genome identifier.
+        purecn_intervals_bed: Path to capture bait BED.
+        purecn_normaldb: Path to pre-built normalDB.rds.
+        purecn_mapping_bias: Path to pre-built mapping_bias.rds.
     """
     content = _build_config_yaml(
         caller=caller,
@@ -764,6 +807,11 @@ def generate_config_template(
         samples_path=samples_path,
         bam_extension=bam_extension,
         scatter_mode=scatter_mode,
+        purecn_enabled=purecn_enabled,
+        purecn_genome=purecn_genome,
+        purecn_intervals_bed=purecn_intervals_bed,
+        purecn_normaldb=purecn_normaldb,
+        purecn_mapping_bias=purecn_mapping_bias,
     )
 
     if dry_run:
@@ -1226,6 +1274,30 @@ def interactive_mode() -> None:
             "Output folder for pipeline results",
             default=default_output,
         )
+
+        # PureCN settings
+        purecn_enabled = False
+        purecn_genome = "hg38"
+        purecn_intervals_bed = ""
+        purecn_normaldb = ""
+        purecn_mapping_bias = ""
+
+        if caller in ("mutect2", "all"):
+            purecn_enabled = _prompt_yn("\nEnable PureCN copy number analysis?", default=False)
+            if purecn_enabled:
+                purecn_genome = _prompt_choice("PureCN genome", ["hg38", "hg19"], default="hg38")
+                purecn_intervals_bed = _prompt_path(
+                    "  Capture bait BED file (for PureCN intervals)",
+                    must_exist=False,
+                )
+                use_prebuilt = _prompt_yn("  Use pre-built normalDB?", default=False)
+                if use_prebuilt:
+                    purecn_normaldb = _prompt_path("    normalDB.rds path", must_exist=False)
+                    purecn_mapping_bias = _prompt_path(
+                        "    mapping_bias.rds path (leave empty to skip)",
+                        must_exist=False,
+                    )
+
         generate_config_template(
             config_output=Path(config_output),
             caller=caller,
@@ -1236,6 +1308,11 @@ def interactive_mode() -> None:
             samples_path=samples_output,
             bam_extension=bam_ext,
             scatter_mode=scatter_mode,
+            purecn_enabled=purecn_enabled,
+            purecn_genome=purecn_genome,
+            purecn_intervals_bed=purecn_intervals_bed,
+            purecn_normaldb=purecn_normaldb,
+            purecn_mapping_bias=purecn_mapping_bias,
         )
 
     print("\nDone.")
@@ -1310,6 +1387,32 @@ Examples:
         choices=["chromosome", "interval", "none"],
         default="chromosome",
         help="Scatter mode (default: chromosome)",
+    )
+    parser.add_argument(
+        "--purecn",
+        action="store_true",
+        help="Enable PureCN copy number analysis in config",
+    )
+    parser.add_argument(
+        "--purecn-genome",
+        choices=["hg19", "hg38"],
+        default="hg38",
+        help="PureCN genome identifier (default: hg38)",
+    )
+    parser.add_argument(
+        "--purecn-intervals-bed",
+        default="",
+        help="BED file with capture bait coordinates (for PureCN)",
+    )
+    parser.add_argument(
+        "--purecn-normaldb",
+        default="",
+        help="Pre-built normalDB.rds path (skips NormalDB.R)",
+    )
+    parser.add_argument(
+        "--purecn-mapping-bias",
+        default="",
+        help="Pre-built mapping_bias.rds path",
     )
     parser.add_argument(
         "--dry-run",
@@ -1426,6 +1529,11 @@ Examples:
             scatter_mode=args.scatter_mode,
             dry_run=args.dry_run,
             force=args.force,
+            purecn_enabled=args.purecn,
+            purecn_genome=args.purecn_genome,
+            purecn_intervals_bed=args.purecn_intervals_bed,
+            purecn_normaldb=args.purecn_normaldb,
+            purecn_mapping_bias=args.purecn_mapping_bias,
         )
 
     print("\nDone.")

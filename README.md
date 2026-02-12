@@ -2,7 +2,9 @@
 
 Snakemake 8+ variant calling pipeline for somatic (Mutect2) and germline (FreeBayes) analysis on SLURM HPC clusters.
 
-**Analysis-ready BAMs → scatter → call → gather → filter → VCF**
+**Analysis-ready BAMs → scatter → call → gather → filter → VCF → QC**
+
+Optional: **PureCN** copy number / purity analysis on Mutect2 output.
 
 Supports both **BIH HPC** and **Charite HPC** (auto-detected), plus local execution.
 
@@ -229,13 +231,29 @@ scatter:
   count: 400                         # intervals (for interval mode)
   chromosomes: ["chr1", ..., "chrY", "chrM"]
 
-params:                              # extra CLI args passed through to tools
+params:
   mutect2:
-    extra: "--genotype-germline-sites true --genotype-pon-sites true"
+    genotype_germline_sites: true    # PureCN-compatible (emit germline sites)
+    genotype_pon_sites: true         # PureCN-compatible (emit PoN sites)
+    annotations: []                  # extra --annotation flags
+    annotation_groups: []            # extra --annotation-group flags
+    extra: ""                        # passthrough for other Mutect2 flags
   freebayes:
     extra: "--min-coverage 20 --limit-coverage 500"
   bcftools_norm:
     extra: "-m-any --force -a --atom-overlaps ."
+  bcftools_stats:
+    extra: ""                        # extra bcftools stats flags
+
+purecn:                              # optional copy number analysis
+  enabled: false                     # opt-in
+  genome: "hg38"                     # "hg19" | "hg38"
+  intervals_bed: ""                  # capture bait BED
+  normaldb: ""                       # pre-built normalDB.rds (optional)
+  mapping_bias: ""                   # pre-built mapping_bias.rds (optional)
+  extra: ""                          # extra PureCN.R flags
+  seed: 123
+  postoptimize: true
 ```
 
 | Section | Key settings |
@@ -246,7 +264,8 @@ params:                              # extra CLI args passed through to tools
 | `paths` | Input BAM folder, output folder, samples TSV path |
 | `bam` | BAM file extension (must match sm-alignment output) |
 | `scatter` | Parallelization mode and chromosome list |
-| `params` | Tool-specific extra arguments (passthrough strings) |
+| `params` | Tool-specific parameters (Mutect2 dedicated fields + passthrough strings) |
+| `purecn` | PureCN copy number analysis (disabled by default) |
 
 ### `config/samples.tsv`
 
@@ -378,7 +397,9 @@ workflow/Snakefile
     ├── rules/helpers.py       Pure Python functions (unit-testable)
     ├── rules/scatter.smk      Interval scattering (shared by both callers)
     ├── rules/mutect2.smk      Mutect2: call → gather → contamination → filter
-    └── rules/freebayes.smk    FreeBayes: call → merge + normalize
+    ├── rules/freebayes.smk    FreeBayes: call → merge + normalize
+    ├── rules/qc.smk           bcftools stats + MultiQC report
+    └── rules/purecn.smk       PureCN purity/ploidy/CN (optional)
 ```
 
 ### Mutect2 DAG
@@ -402,6 +423,25 @@ BAM files
     └── merge_freebayes_vcfs                            [protected]
 ```
 
+### Quality Control DAG
+
+```
+Filtered VCFs
+    ├── bcftools_stats_mutect2 (per sample)
+    ├── bcftools_stats_freebayes
+    └── multiqc                                         → multiqc_report.html
+```
+
+### PureCN DAG (optional, `purecn.enabled: true`)
+
+```
+BAM files + Mutect2 VCFs
+    ├── purecn_intervals (one-time)                     [localrule]
+    ├── purecn_coverage (per unique BAM)
+    ├── purecn_normaldb (one-time, from normal coverages)
+    └── purecn_run (per Mutect2 sample)                 → purity, ploidy, CN
+```
+
 ---
 
 ## Tools & Conda Environments
@@ -410,7 +450,9 @@ BAM files
 |-----------|-------|---------|
 | `workflow/envs/gatk.yaml` | gatk4 4.6.1.0, samtools 1.21 | Mutect2 pipeline |
 | `workflow/envs/freebayes.yaml` | freebayes 1.3.8, htslib 1.21 | FreeBayes calling |
-| `workflow/envs/bcftools.yaml` | bcftools 1.21, htslib 1.21 | VCF merge + normalize |
+| `workflow/envs/bcftools.yaml` | bcftools 1.21, htslib 1.21 | VCF merge + normalize, bcftools stats |
+| `workflow/envs/multiqc.yaml` | MultiQC 1.27 | QC report aggregation |
+| `workflow/envs/purecn.yaml` | PureCN 2.12.0, r-optparse 1.7.5 | Copy number analysis |
 
 Conda environments are created automatically by Snakemake on first run (`software-deployment-method: conda` in the workflow profile).
 
