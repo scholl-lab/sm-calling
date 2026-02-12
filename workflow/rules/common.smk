@@ -124,6 +124,15 @@ def get_normal_name(wildcards):
     return ""
 
 
+def get_normal_input_arg(wildcards):
+    """Return '-I normal.bam' arg or empty string for GATK Mutect2."""
+    row = samples_df.loc[wildcards.sample]
+    normal = row.get("normal_bam", "")
+    if normal and normal != "." and pd.notna(normal):
+        return f"-I {os.path.join(BAM_FOLDER, normal + BAM_EXT)}"
+    return ""
+
+
 def get_interval_arg(wildcards):
     """Return -L argument based on scatter mode and unit."""
     unit = wildcards.scatter_unit

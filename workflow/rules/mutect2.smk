@@ -30,6 +30,7 @@ rule mutect2_call:
         f1r2=temp(os.path.join(MUTECT2_SCATTER_DIR, "{sample}_{scatter_unit}.f1r2.tar.gz")),
     params:
         normal_arg=get_normal_name,
+        normal_input_arg=get_normal_input_arg,
         interval_arg=get_interval_arg,
         java_opts=get_java_opts,
         extra=MUTECT2_ALL_ARGS,
@@ -48,6 +49,7 @@ rule mutect2_call:
         gatk --java-options '{params.java_opts}' Mutect2 \
             -R {input.reference} \
             -I {input.tumor_bam} \
+            {params.normal_input_arg} \
             {params.normal_arg} \
             --germline-resource {input.gnomad} \
             --panel-of-normals {input.pon} \
