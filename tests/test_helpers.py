@@ -108,18 +108,37 @@ class TestBuildMutect2ExtraArgs:
         result = build_mutect2_extra_args()
         assert "--genotype-germline-sites true" in result
         assert "--genotype-pon-sites true" in result
+        assert "--disable-adaptive-pruning true" in result
 
     def test_disabled(self):
         result = build_mutect2_extra_args(
             genotype_germline_sites=False,
             genotype_pon_sites=False,
+            disable_adaptive_pruning=False,
         )
         assert result == ""
+
+    def test_disable_adaptive_pruning_on(self):
+        result = build_mutect2_extra_args(
+            genotype_germline_sites=False,
+            genotype_pon_sites=False,
+            disable_adaptive_pruning=True,
+        )
+        assert result == "--disable-adaptive-pruning true"
+
+    def test_disable_adaptive_pruning_off(self):
+        result = build_mutect2_extra_args(
+            genotype_germline_sites=False,
+            genotype_pon_sites=False,
+            disable_adaptive_pruning=False,
+        )
+        assert "--disable-adaptive-pruning" not in result
 
     def test_annotations(self):
         result = build_mutect2_extra_args(
             genotype_germline_sites=False,
             genotype_pon_sites=False,
+            disable_adaptive_pruning=False,
             annotations=["OrientationBiasReadCounts", "StrandBiasBySample"],
             annotation_groups=["AS_StandardAnnotation"],
         )
@@ -141,18 +160,20 @@ class TestBuildMutect2ExtraArgs:
         result = build_mutect2_extra_args(
             genotype_germline_sites=True,
             genotype_pon_sites=True,
+            disable_adaptive_pruning=True,
             annotations=["OrientationBiasReadCounts"],
             annotation_groups=["AS_StandardAnnotation"],
             extra="--custom-flag",
         )
         parts = result.split()
-        # Verify ordering: germline, pon, annotations, annotation-groups, extra
+        # Verify ordering: germline, pon, pruning, annotations, annotation-groups, extra
         germline_idx = parts.index("--genotype-germline-sites")
         pon_idx = parts.index("--genotype-pon-sites")
+        pruning_idx = parts.index("--disable-adaptive-pruning")
         ann_idx = parts.index("--annotation")
         grp_idx = parts.index("--annotation-group")
         custom_idx = parts.index("--custom-flag")
-        assert germline_idx < pon_idx < ann_idx < grp_idx < custom_idx
+        assert germline_idx < pon_idx < pruning_idx < ann_idx < grp_idx < custom_idx
 
 
 class TestGetNormalBamBasenames:

@@ -45,6 +45,7 @@ _m2_params = config.get("params", {}).get("mutect2", {})
 MUTECT2_ALL_ARGS = _build_mutect2_extra_args_impl(
     genotype_germline_sites=_m2_params.get("genotype_germline_sites", True),
     genotype_pon_sites=_m2_params.get("genotype_pon_sites", True),
+    disable_adaptive_pruning=_m2_params.get("disable_adaptive_pruning", True),
     annotations=_m2_params.get("annotations", []),
     annotation_groups=_m2_params.get("annotation_groups", []),
     extra=_m2_params.get("extra", ""),

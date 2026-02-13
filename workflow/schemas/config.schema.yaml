@@ -90,6 +90,10 @@ properties:
             type: boolean
             default: true
             description: "Emit PoN sites (required for PureCN)."
+          disable_adaptive_pruning:
+            type: boolean
+            default: true
+            description: "Disable Mutect2 adaptive pruning to prevent silent dropout of low-AF somatic variants in tumor-normal mode (GATK issue #7232)."
           annotations:
             type: array
             items:

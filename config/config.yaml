@@ -64,6 +64,10 @@ params:
     # PureCN-compatible defaults (emit germline + PoN sites)
     genotype_germline_sites: true
     genotype_pon_sites: true
+    # Disable adaptive pruning to prevent silent dropout of low-AF somatic
+    # variants in tumor-normal mode (GATK issue #7232).  FilterMutectCalls
+    # still removes artifacts downstream.
+    disable_adaptive_pruning: true
     # Optional: additional Mutect2 annotations
     annotations: []
     annotation_groups: []

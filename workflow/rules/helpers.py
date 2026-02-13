@@ -65,6 +65,7 @@ def get_scatter_units(
 def build_mutect2_extra_args(
     genotype_germline_sites: bool = True,
     genotype_pon_sites: bool = True,
+    disable_adaptive_pruning: bool = True,
     annotations: list[str] | None = None,
     annotation_groups: list[str] | None = None,
     extra: str = "",
@@ -78,6 +79,8 @@ def build_mutect2_extra_args(
         args.append("--genotype-germline-sites true")
     if genotype_pon_sites:
         args.append("--genotype-pon-sites true")
+    if disable_adaptive_pruning:
+        args.append("--disable-adaptive-pruning true")
     for ann in annotations or []:
         args.append(f"--annotation {ann}")
     for grp in annotation_groups or []:
