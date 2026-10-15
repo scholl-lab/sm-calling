@@ -174,6 +174,7 @@ rule mutect2_call:
         stats=temp(os.path.join(MUTECT2_SCATTER_DIR, "{sample}_{scatter_unit}.vcf.gz.stats")),
         f1r2=temp(os.path.join(MUTECT2_SCATTER_DIR, "{sample}_{scatter_unit}.f1r2.tar.gz")),
     params:
+        tumor_input_arg=get_tumor_input_arg,
         normal_input_arg=get_normal_input_arg,
         interval_arg=get_interval_arg,
         java_opts=get_java_opts,
@@ -200,20 +201,27 @@ rule mutect2_call:
             printf '%s\n' "$sm"
         }}
 
-        tumor_sm=$(extract_sm "{input.tumor_bam}") 2> {log}
+        : > {log}
+        tumor_sms=()
+        for tbam in {input.tumor_bam}; do
+            tsm=$(extract_sm "$tbam") 2>> {log}
+            tumor_sms+=("$tsm")
+        done
         normal_arg=()
         if [ -n "{input.normal_bam}" ]; then
             normal_sm=$(extract_sm "{input.normal_bam}") 2>> {log}
-            if [ "$tumor_sm" = "$normal_sm" ]; then
-                echo "ERROR: tumor_sm ($tumor_sm) equals normal_sm ($normal_sm)" >> {log}
-                exit 1
-            fi
+            for tsm in "${{tumor_sms[@]}}"; do
+                if [ "$tsm" = "$normal_sm" ]; then
+                    echo "ERROR: tumor_sm ($tsm) equals normal_sm ($normal_sm)" >> {log}
+                    exit 1
+                fi
+            done
             normal_arg=(-normal "$normal_sm")
         fi
 
         gatk --java-options '{params.java_opts}' Mutect2 \
             -R {input.reference} \
-            -I {input.tumor_bam} \
+            {params.tumor_input_arg} \
             {params.normal_input_arg} \
             "${{normal_arg[@]}}" \
             --germline-resource {input.gnomad} \
@@ -376,13 +384,17 @@ rule get_pileup_summaries:
 
 
 rule calculate_contamination:
-    """Calculate contamination for each sample (with optional matched normal)."""
+    """Calculate contamination per (sample, tumor_bam) pair (with optional matched normal)."""
     input:
         tumor_pileup=get_tumor_pileup,
         normal_pileup=get_normal_pileup,
     output:
-        contamination=os.path.join(MUTECT2_CONTAM_DIR, "{sample}.contamination.table"),
-        segments=os.path.join(MUTECT2_CONTAM_DIR, "{sample}.segments.table"),
+        contamination=os.path.join(
+            MUTECT2_CONTAM_DIR, "{sample}_{bam_basename}.contamination.table"
+        ),
+        segments=os.path.join(
+            MUTECT2_CONTAM_DIR, "{sample}_{bam_basename}.segments.table"
+        ),
     params:
         java_opts=get_java_opts,
         matched_arg=lambda wc: (
@@ -395,9 +407,11 @@ rule calculate_contamination:
     conda:
         "../envs/gatk.yaml"
     log:
-        os.path.join(LOG_DIR, "calculate_contamination/{sample}.log"),
+        os.path.join(LOG_DIR, "calculate_contamination/{sample}_{bam_basename}.log"),
     benchmark:
-        os.path.join(LOG_DIR, "benchmarks/calculate_contamination/{sample}.tsv")
+        os.path.join(
+            LOG_DIR, "benchmarks/calculate_contamination/{sample}_{bam_basename}.tsv"
+        )
     shell:
         r"""
         gatk --java-options '{params.java_opts}' CalculateContamination \
@@ -415,8 +429,8 @@ rule filter_mutect_calls:
         vcf=os.path.join(MUTECT2_MERGED_DIR, "{sample}.vcf.gz"),
         reference=REF,
         stats=os.path.join(MUTECT2_MERGED_DIR, "{sample}.vcf.gz.stats"),
-        contamination=os.path.join(MUTECT2_CONTAM_DIR, "{sample}.contamination.table"),
-        segmentation=os.path.join(MUTECT2_CONTAM_DIR, "{sample}.segments.table"),
+        contamination=get_contamination_tables,
+        segmentation=get_segmentation_tables,
         ob_priors=os.path.join(MUTECT2_MERGED_DIR, "{sample}_read-orientation-model.tar.gz"),
     output:
         vcf=ensure(
@@ -426,6 +440,7 @@ rule filter_mutect_calls:
         tbi=protected(os.path.join(MUTECT2_FILTERED_DIR, "{sample}.filtered.vcf.gz.tbi")),
     params:
         java_opts=get_java_opts,
+        contam_args=get_contamination_args,
         extra=FILTER_MUTECT_CALLS_EXTRA,
     retries: 2
     resources:
@@ -446,8 +461,7 @@ rule filter_mutect_calls:
             -R {input.reference} \
             -V {input.vcf} \
             --stats {input.stats} \
-            --contamination-table {input.contamination} \
-            --tumor-segmentation {input.segmentation} \
+            {params.contam_args} \
             --ob-priors {input.ob_priors} \
             {params.extra} \
             -O "$tmp_vcf" \

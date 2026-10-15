@@ -30,12 +30,22 @@ def get_germline_samples(samples_df: pd.DataFrame) -> list[str]:
     return sorted(samples_df.loc[mask, "sample"].unique().tolist())
 
 
+def get_tumor_bam_basenames(samples_df: pd.DataFrame, sample: str) -> list[str]:
+    """Return tumor BAM basenames for a sample (splitting ';'-delimited multi-region entries)."""
+    row = samples_df.loc[samples_df["sample"] == sample].iloc[0]
+    raw = str(row.get("tumor_bam", ""))
+    return [b.strip() for b in raw.split(";") if b.strip() and b.strip() != "."]
+
+
 def get_unique_bam_basenames(samples_df: pd.DataFrame) -> list[str]:
     """Return all unique BAM basenames across tumor and normal columns."""
     bams = set()
     for _, row in samples_df.iterrows():
         if row["tumor_bam"] and row["tumor_bam"] != ".":
-            bams.add(row["tumor_bam"])
+            for b in str(row["tumor_bam"]).split(";"):
+                b = b.strip()
+                if b and b != ".":
+                    bams.add(b)
         if (
             row.get("analysis_type") == "tumor_normal"
             and pd.notna(row.get("normal_bam"))
@@ -72,7 +82,8 @@ def validate_samples_df(samples_df: pd.DataFrame) -> None:
             raise ValueError(
                 "Sample and BAM identifiers must be strings (read samples.tsv with dtype=str)"
             )
-        if not sample or sample == "." or not tumor or tumor == ".":
+        tumor_parts = [b.strip() for b in tumor.split(";")]
+        if not sample or sample == "." or not tumor or any(not b or b == "." for b in tumor_parts):
             raise ValueError(f"Sample '{sample}' has empty or '.' sample/tumor_bam")
 
         has_normal_bam = bool(normal) and normal != "." and pd.notna(normal)

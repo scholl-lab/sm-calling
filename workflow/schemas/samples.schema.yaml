@@ -8,7 +8,7 @@ properties:
     description: Unique sample/analysis identifier.
   tumor_bam:
     type: string
-    description: Basename of tumor/primary BAM file.
+    description: "Basename(s) of tumor/primary BAM file(s); semicolon-delimited for multi-region samples."
   normal_bam:
     type: string
     description: "Basename of matched normal BAM file. Use '.' or leave empty if none."

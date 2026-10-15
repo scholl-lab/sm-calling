@@ -16,6 +16,7 @@ from helpers import (
     get_mutect2_samples,
     get_normal_bam_basenames,
     get_scatter_units,
+    get_tumor_bam_basenames,
     get_unique_bam_basenames,
     has_matched_normal,
     validate_samples_df,
@@ -648,5 +649,107 @@ class TestCohortPonAndHotspotMasking:
         assert res.returncode == 0
         args = bcftools_args_file.read_text().splitlines()
         assert args[:5] == ["view", "-T", "^hotspots_pad15.bed", "-Oz", "-W=tbi"]
+
+
+class TestMultiRegionTumorBams:
+    def test_semicolon_delimited_tumor_bams_and_filter_mutect_calls(
+        self, tmp_path, config_dict
+    ):
+        from pathlib import Path
+        import subprocess
+        import pandas as pd
+
+        df = pd.DataFrame(
+            {
+                "sample": ["MR1", "S1"],
+                "tumor_bam": ["T1;T2", "S1.T"],
+                "normal_bam": ["N1", "N1"],
+                "analysis_type": ["tumor_normal", "tumor_normal"],
+            }
+        ).set_index("sample", drop=False)
+
+        validate_samples_df(df)
+        assert get_tumor_bam_basenames(df, "MR1") == ["T1", "T2"]
+        assert get_unique_bam_basenames(df) == ["N1", "S1.T", "T1", "T2"]
+
+        cfg = dict(config_dict)
+        cfg["purecn"] = {"enabled": True, "genome": "hg38"}
+        ns = {"config": cfg, "samples_df": df}
+        root = Path(__file__).parent.parent
+        exec((root / "workflow/rules/common.smk").read_text(), ns)
+
+        wc = _DefaultNamespace(sample="MR1")
+        assert ns["get_tumor_bam"](wc) == [
+            "/bams/T1.merged.dedup.bqsr.bam",
+            "/bams/T2.merged.dedup.bqsr.bam",
+        ]
+        assert (
+            ns["get_tumor_input_arg"](wc)
+            == "-I /bams/T1.merged.dedup.bqsr.bam -I /bams/T2.merged.dedup.bqsr.bam"
+        )
+        assert ns["get_contamination_tables"](wc) == [
+            "/output/mutect2/contamination/MR1_T1.contamination.table",
+            "/output/mutect2/contamination/MR1_T2.contamination.table",
+        ]
+        assert ns["get_segmentation_tables"](wc) == [
+            "/output/mutect2/contamination/MR1_T1.segments.table",
+            "/output/mutect2/contamination/MR1_T2.segments.table",
+        ]
+
+        final_outs = ns["get_final_outputs"]()
+        assert "/output/purecn/results/S1/S1.csv" in final_outs
+        assert "/output/purecn/results/MR1/MR1.csv" not in final_outs
+
+        res, gatk_args = TestMutect2CallSmResolution._run_mutect2_shell(
+            tmp_path,
+            tumor_headers={
+                "T1.bam": "@RG\tID:1\tSM:T1\n",
+                "T2.bam": "@RG\tID:2\tSM:T2\n",
+            },
+            normal_header="@RG\tID:3\tSM:N1\n",
+        )
+        assert res.returncode == 0
+        assert gatk_args.count("-I") == 3
+
+        bin_dir = tmp_path / "fbin"
+        bin_dir.mkdir()
+        gatk_args_file = tmp_path / "filter_gatk_args.txt"
+        for tool in ("gatk", "bcftools"):
+            p = bin_dir / tool
+            p.write_text(
+                f'#!/usr/bin/env bash\n[ "{tool}" = "gatk" ] && printf "%s\\n" "$@" > "{gatk_args_file}" || true\n'
+            )
+            p.chmod(0o755)
+
+        out_vcf = str(tmp_path / "MR1.filtered.vcf.gz")
+        shell_tpl = _extract_rule_shell("workflow/rules/mutect2.smk", "filter_mutect_calls")
+        script = shell_tpl.format(
+            input=_DefaultNamespace(
+                reference="ref.fa",
+                vcf="in.vcf.gz",
+                stats="in.vcf.gz.stats",
+                contamination=" ".join(ns["get_contamination_tables"](wc)),
+                segmentation=" ".join(ns["get_segmentation_tables"](wc)),
+                ob_priors="MR1_read-orientation-model.tar.gz",
+            ),
+            output=_DefaultNamespace(vcf=out_vcf, tbi=f"{out_vcf}.tbi"),
+            params=_DefaultNamespace(
+                java_opts="-Xmx4g",
+                contam_args=ns["get_contamination_args"](wc),
+                extra="",
+            ),
+            log=str(tmp_path / "filter_mr.log"),
+        )
+        env = {**os.environ, "PATH": f"{bin_dir}:{os.environ['PATH']}"}
+        res_f = subprocess.run(
+            ["bash", "-euo", "pipefail", "-c", script],
+            env=env,
+            capture_output=True,
+            text=True,
+        )
+        assert res_f.returncode == 0
+        f_args = gatk_args_file.read_text().splitlines()
+        assert f_args.count("--contamination-table") == 2
+        assert f_args.count("--tumor-segmentation") == 2
 
 

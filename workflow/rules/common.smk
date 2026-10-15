@@ -11,6 +11,7 @@ from rules.helpers import (
     get_mutect2_samples as _get_mutect2_samples_impl,
     get_germline_samples as _get_germline_samples_impl,
     get_normal_bam_basenames as _get_normal_bam_basenames_impl,
+    get_tumor_bam_basenames as _get_tumor_bam_basenames_impl,
     get_unique_bam_basenames as _get_unique_bam_basenames_impl,
     has_matched_normal as _has_matched_normal_impl,
     get_scatter_units as _get_scatter_units_impl,
@@ -96,6 +97,10 @@ def get_normal_bams():
     return _get_normal_bam_basenames_impl(samples_df)
 
 
+def get_tumor_bams(sample):
+    return _get_tumor_bam_basenames_impl(samples_df, sample)
+
+
 def has_normal(sample):
     return _has_matched_normal_impl(samples_df, sample)
 
@@ -115,9 +120,16 @@ def get_pon(wildcards=None):
 
 
 def get_tumor_bam(wildcards):
-    """Return full path to tumor BAM for a sample."""
-    row = samples_df.loc[wildcards.sample]
-    return os.path.join(BAM_FOLDER, row["tumor_bam"] + BAM_EXT)
+    """Return full path(s) to tumor BAM(s) for a sample."""
+    return [
+        os.path.join(BAM_FOLDER, b + BAM_EXT)
+        for b in get_tumor_bams(wildcards.sample)
+    ]
+
+
+def get_tumor_input_arg(wildcards):
+    """Return '-I tumor.bam [-I tumor2.bam ...]' arg for GATK Mutect2."""
+    return " ".join(f"-I {p}" for p in get_tumor_bam(wildcards))
 
 
 def get_normal_bam(wildcards):
@@ -195,11 +207,11 @@ def get_java_opts(wildcards, resources):
 
 
 def get_tumor_pileup(wildcards):
-    """Return pileup table path for the tumor BAM of a sample."""
-    row = samples_df.loc[wildcards.sample]
+    """Return pileup table path for a (sample, bam_basename) pair."""
+    bam_basename = getattr(wildcards, "bam_basename", "") or get_tumor_bams(wildcards.sample)[0]
     return os.path.join(
         MUTECT2_CONTAM_DIR,
-        row["tumor_bam"] + ".getpileupsummaries.table",
+        bam_basename + ".getpileupsummaries.table",
     )
 
 
@@ -220,6 +232,33 @@ def get_normal_pileup(wildcards):
             )
         ]
     return []
+
+
+def get_contamination_tables(wildcards):
+    """Return contamination table path(s) for all tumor BAMs of a sample."""
+    return [
+        os.path.join(MUTECT2_CONTAM_DIR, f"{wildcards.sample}_{b}.contamination.table")
+        for b in get_tumor_bams(wildcards.sample)
+    ]
+
+
+def get_segmentation_tables(wildcards):
+    """Return tumor segmentation table path(s) for all tumor BAMs of a sample."""
+    return [
+        os.path.join(MUTECT2_CONTAM_DIR, f"{wildcards.sample}_{b}.segments.table")
+        for b in get_tumor_bams(wildcards.sample)
+    ]
+
+
+def get_contamination_args(wildcards):
+    """Return --contamination-table and --tumor-segmentation flags for FilterMutectCalls."""
+    contam = " ".join(
+        f"--contamination-table {p}" for p in get_contamination_tables(wildcards)
+    )
+    seg = " ".join(
+        f"--tumor-segmentation {p}" for p in get_segmentation_tables(wildcards)
+    )
+    return f"{contam} {seg}"
 
 
 # -- PureCN config -----------------------------------------------------------
@@ -264,10 +303,11 @@ def get_final_outputs():
             outputs.append(os.path.join(MUTECT2_FILTERED_DIR, f"{sample}.filtered.vcf.gz"))
     if CALLER in ("freebayes", "all"):
         outputs.append(os.path.join(FREEBAYES_DIR, "final_merged.vcf.gz"))
-    # PureCN outputs (Mutect2 samples only)
+    # PureCN outputs (single-BAM Mutect2 samples only)
     if PURECN_ENABLED and CALLER in ("mutect2", "all"):
         for sample in get_mutect2_sample_list():
-            outputs.append(os.path.join(PURECN_RESULTS_DIR, sample, f"{sample}.csv"))
+            if len(get_tumor_bams(sample)) == 1:
+                outputs.append(os.path.join(PURECN_RESULTS_DIR, sample, f"{sample}.csv"))
     # QC report (always generated when there are outputs)
     if outputs:
         outputs.append(os.path.join(QC_DIR, "multiqc_report.html"))
