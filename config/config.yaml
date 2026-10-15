@@ -12,6 +12,7 @@ ref:
 # --- GATK resources (required for Mutect2) ---
 gatk_resources:
   panel_of_normals: "analysis/GATK_resource_bundle/1000g_pon.hg38.vcf.gz"
+  pon_mask_bed: ""
   af_only_gnomad: "analysis/GATK_resource_bundle/af-only-gnomad.hg38.vcf.gz"
   common_biallelic_gnomad: "analysis/GATK_resource_bundle/af-only-gnomad.hg38.common_biallelic.vcf.gz"
 
@@ -31,6 +32,7 @@ bam:
 scatter:
   mode: "chromosome"  # "chromosome" | "interval" | "none"
   count: 400           # Number of intervals (for interval mode)
+  target_bed: ""       # Optional capture target BED file
   chromosomes:
     - "chr1"
     - "chr2"
@@ -72,6 +74,8 @@ params:
     annotations: []
     annotation_groups: []
     # Passthrough for any other Mutect2 flags
+    extra: ""
+  filter_mutect_calls:
     extra: ""
   freebayes:
     extra: "--min-coverage 20 --limit-coverage 500 --use-best-n-alleles 4 --standard-filters"

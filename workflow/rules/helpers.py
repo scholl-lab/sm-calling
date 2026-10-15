@@ -30,13 +30,27 @@ def get_germline_samples(samples_df: pd.DataFrame) -> list[str]:
     return sorted(samples_df.loc[mask, "sample"].unique().tolist())
 
 
+def get_tumor_bam_basenames(samples_df: pd.DataFrame, sample: str) -> list[str]:
+    """Return tumor BAM basenames for a sample (splitting ';'-delimited multi-region entries)."""
+    row = samples_df.loc[samples_df["sample"] == sample].iloc[0]
+    raw = str(row.get("tumor_bam", ""))
+    return [b.strip() for b in raw.split(";") if b.strip() and b.strip() != "."]
+
+
 def get_unique_bam_basenames(samples_df: pd.DataFrame) -> list[str]:
     """Return all unique BAM basenames across tumor and normal columns."""
     bams = set()
     for _, row in samples_df.iterrows():
         if row["tumor_bam"] and row["tumor_bam"] != ".":
-            bams.add(row["tumor_bam"])
-        if pd.notna(row.get("normal_bam")) and row["normal_bam"] not in ("", "."):
+            for b in str(row["tumor_bam"]).split(";"):
+                b = b.strip()
+                if b and b != ".":
+                    bams.add(b)
+        if (
+            row.get("analysis_type") == "tumor_normal"
+            and pd.notna(row.get("normal_bam"))
+            and row["normal_bam"] not in ("", ".")
+        ):
             bams.add(row["normal_bam"])
     return sorted(bams)
 
@@ -44,22 +58,125 @@ def get_unique_bam_basenames(samples_df: pd.DataFrame) -> list[str]:
 def has_matched_normal(samples_df: pd.DataFrame, sample: str) -> bool:
     """Check whether a sample has a matched normal BAM."""
     row = samples_df.loc[samples_df["sample"] == sample].iloc[0]
+    if row.get("analysis_type") != "tumor_normal":
+        return False
     normal = row.get("normal_bam", "")
     return bool(normal) and normal != "." and pd.notna(normal)
+
+
+def validate_samples_df(samples_df: pd.DataFrame) -> None:
+    """Validate sample sheet invariants beyond per-row JSON schema checks."""
+    if samples_df["sample"].duplicated().any() or samples_df.index.duplicated().any():
+        dups = sorted(
+            samples_df.loc[samples_df["sample"].duplicated(), "sample"].astype(str).unique()
+        )
+        raise ValueError(f"Duplicate sample IDs in samples.tsv: {dups}")
+
+    for _, row in samples_df.iterrows():
+        sample = row.get("sample", "")
+        tumor = row.get("tumor_bam", "")
+        normal = row.get("normal_bam", "")
+        analysis_type = row.get("analysis_type", "")
+
+        if not isinstance(sample, str) or not isinstance(tumor, str):
+            raise ValueError(
+                "Sample and BAM identifiers must be strings (read samples.tsv with dtype=str)"
+            )
+        tumor_parts = [b.strip() for b in tumor.split(";")]
+        if not sample or sample == "." or not tumor or any(not b or b == "." for b in tumor_parts):
+            raise ValueError(f"Sample '{sample}' has empty or '.' sample/tumor_bam")
+
+        has_normal_bam = bool(normal) and normal != "." and pd.notna(normal)
+        if has_normal_bam and not isinstance(normal, str):
+            raise ValueError("normal_bam must be a string (read samples.tsv with dtype=str)")
+        if analysis_type == "tumor_normal" and not has_normal_bam:
+            raise ValueError(
+                f"Sample '{sample}' has analysis_type='tumor_normal' but missing normal_bam"
+            )
+        if analysis_type != "tumor_normal" and has_normal_bam:
+            raise ValueError(
+                f"Sample '{sample}' has analysis_type='{analysis_type}' "
+                f"but normal_bam='{normal}' is provided"
+            )
+
+
+def get_bed_chromosomes(target_bed: str) -> set[str]:
+    """Return the set of chromosomes with at least one interval in a BED file."""
+    chroms: set[str] = set()
+    with open(target_bed, encoding="utf-8") as fh:
+        for raw_line in fh:
+            line = raw_line.strip()
+            if (
+                not line
+                or line.startswith("#")
+                or line.startswith(("track ", "track\t", "browser ", "browser\t"))
+                or line in ("track", "browser")
+            ):
+                continue
+            fields = line.split()
+            if len(fields) >= 3:
+                try:
+                    if int(fields[2]) > int(fields[1]):
+                        chroms.add(fields[0])
+                except ValueError:
+                    continue
+    return chroms
 
 
 def get_scatter_units(
     mode: str,
     chromosomes: list[str] | None = None,
     scatter_count: int = 400,
+    target_bed: str = "",
 ) -> list[str]:
     """Return the list of scatter units based on mode."""
     if mode == "chromosome":
-        return chromosomes or []
+        chroms = list(chromosomes or [])
+        if target_bed:
+            bed_chroms = get_bed_chromosomes(target_bed)
+            return [c for c in chroms if c in bed_chroms]
+        return chroms
     elif mode == "interval":
         return [f"{i:04d}-scattered" for i in range(scatter_count)]
     else:
         return ["all"]
+
+
+def build_interval_arg(
+    mode: str,
+    unit: str,
+    intervals_dir: str = "",
+    target_bed: str = "",
+) -> str:
+    """Build GATK -L interval arguments with optional target_bed intersection."""
+    if mode == "chromosome":
+        if target_bed:
+            return f"-L {unit} -L {target_bed} --interval-set-rule INTERSECTION"
+        return f"-L {unit}"
+    elif mode == "interval":
+        if target_bed:
+            return (
+                f"-L {intervals_dir}/{unit}.interval_list "
+                f"-L {target_bed} --interval-set-rule INTERSECTION"
+            )
+        return f"-L {intervals_dir}/{unit}.interval_list"
+    elif target_bed:
+        return f"-L {target_bed}"
+    return ""
+
+
+def build_pon_interval_arg(
+    mode: str,
+    chromosomes: list[str] | None = None,
+    intervals_dir: str = "",
+    target_bed: str = "",
+) -> str:
+    """Build GATK -L interval argument(s) for cohort PoN GenomicsDBImport."""
+    if target_bed:
+        return f"-L {target_bed}"
+    if mode == "chromosome" and chromosomes:
+        return " ".join(f"-L {c}" for c in chromosomes)
+    return f"-L {intervals_dir}/scattered.interval_list"
 
 
 def build_mutect2_extra_args(
@@ -91,12 +208,26 @@ def build_mutect2_extra_args(
 
 
 def get_normal_bam_basenames(samples_df: pd.DataFrame) -> list[str]:
-    """Return sorted basenames of all normal BAMs (for NormalDB)."""
+    """Return sorted basenames of normal BAMs (for PoN and PureCN NormalDB)."""
+    has_in_pon = "in_pon" in samples_df.columns
     normals: set[str] = set()
     for _, row in samples_df.iterrows():
+        in_pon = str(row.get("in_pon", "")).strip().lower() in (
+            "yes",
+            "true",
+            "1",
+        )
+        if has_in_pon and not in_pon:
+            continue
+        analysis_type = row.get("analysis_type")
         normal = row.get("normal_bam", "")
-        if normal and normal != "." and pd.notna(normal):
+        if analysis_type == "tumor_normal" and normal and normal != "." and pd.notna(normal):
             normals.add(normal)
+        elif has_in_pon and in_pon and analysis_type == "germline":
+            for b in str(row.get("tumor_bam", "")).split(";"):
+                b = b.strip()
+                if b and b != ".":
+                    normals.add(b)
     return sorted(normals)
 
 

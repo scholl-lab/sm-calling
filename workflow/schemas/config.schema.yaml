@@ -26,6 +26,9 @@ properties:
     properties:
       panel_of_normals:
         type: string
+      pon_mask_bed:
+        type: string
+        default: ""
       af_only_gnomad:
         type: string
       common_biallelic_gnomad:
@@ -70,6 +73,10 @@ properties:
         type: integer
         minimum: 1
         default: 400
+      target_bed:
+        type: string
+        default: ""
+        description: "Optional capture target BED file for interval restriction."
       chromosomes:
         type: array
         items:
@@ -106,6 +113,12 @@ properties:
               type: string
             default: []
             description: "Extra --annotation-group flags for Mutect2."
+          extra:
+            type: string
+            default: ""
+      filter_mutect_calls:
+        type: object
+        properties:
           extra:
             type: string
             default: ""

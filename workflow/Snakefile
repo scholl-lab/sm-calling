@@ -10,14 +10,20 @@ min_version("8.0")
 import pandas as pd
 
 
+from rules.helpers import validate_samples_df
+
+
 # -- Configuration -----------------------------------------------------------
 configfile: "config/config.yaml"
 
 
 validate(config, "schemas/config.schema.yaml")
 
-samples_df = pd.read_table(config["paths"]["samples"]).set_index("sample", drop=False)
+samples_df = pd.read_table(config["paths"]["samples"], dtype=str, keep_default_na=False).set_index(
+    "sample", drop=False, verify_integrity=True
+)
 validate(samples_df, "schemas/samples.schema.yaml")
+validate_samples_df(samples_df)
 
 
 # -- Includes ----------------------------------------------------------------

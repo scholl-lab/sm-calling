@@ -8,7 +8,7 @@ properties:
     description: Unique sample/analysis identifier.
   tumor_bam:
     type: string
-    description: Basename of tumor/primary BAM file.
+    description: "Basename(s) of tumor/primary BAM file(s); semicolon-delimited for multi-region samples."
   normal_bam:
     type: string
     description: "Basename of matched normal BAM file. Use '.' or leave empty if none."
@@ -16,5 +16,8 @@ properties:
     type: string
     enum: ["tumor_only", "tumor_normal", "germline"]
     description: Type of variant calling analysis.
+  in_pon:
+    type: string
+    description: "Optional flag ('yes'/'no') controlling inclusion of matched or standalone normal BAM in cohort PoN."
 
 required: [sample, tumor_bam, analysis_type]

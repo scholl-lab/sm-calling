@@ -4,32 +4,38 @@ Only activated when scatter mode is "interval". Chromosome-based scattering
 needs no preprocessing -- chromosomes are passed directly as -L/-r arguments.
 """
 
-if SCATTER_MODE == "interval":
 
-    rule scatter_intervals_by_ns:
-        """Create an interval list from reference genome Ns using GATK ScatterIntervalsByNs."""
-        input:
-            reference=REF,
-        output:
-            interval_list=os.path.join(INTERVALS_DIR, "scattered.interval_list"),
-        log:
-            os.path.join(LOG_DIR, "scatter/scatter_intervals_by_ns.log"),
-        benchmark:
-            os.path.join(LOG_DIR, "benchmarks/scatter/scatter_intervals_by_ns.tsv")
-        conda:
-            "../envs/gatk.yaml"
-        shell:
-            r"""
-            gatk ScatterIntervalsByNs \
-                -R {input.reference} \
-                -O {output.interval_list} \
-                2> {log}
-            """
+rule scatter_intervals_by_ns:
+    """Create an interval list from reference genome Ns using GATK ScatterIntervalsByNs."""
+    input:
+        reference=REF,
+    output:
+        interval_list=os.path.join(INTERVALS_DIR, "scattered.interval_list"),
+    log:
+        os.path.join(LOG_DIR, "scatter/scatter_intervals_by_ns.log"),
+    benchmark:
+        os.path.join(LOG_DIR, "benchmarks/scatter/scatter_intervals_by_ns.tsv")
+    conda:
+        "../envs/gatk.yaml"
+    shell:
+        r"""
+        gatk ScatterIntervalsByNs \
+            -R {input.reference} \
+            -O {output.interval_list} \
+            2> {log}
+        """
+
+
+if SCATTER_MODE == "interval":
 
     rule split_intervals:
         """Split the scattered interval list into SCATTER_COUNT parts."""
         input:
-            interval_list=os.path.join(INTERVALS_DIR, "scattered.interval_list"),
+            interval_list=(
+                TARGET_BED
+                if TARGET_BED
+                else os.path.join(INTERVALS_DIR, "scattered.interval_list")
+            ),
             reference=REF,
         output:
             interval_lists=temp(
@@ -62,12 +68,9 @@ if SCATTER_MODE == "interval":
                 -O {params.intervals_dir} \
                 2> {log}
 
-            # Convert each .interval_list to .bed
+            # Convert each 1-based .interval_list to 0-based .bed
             for interval in {params.intervals_dir}/*-scattered.interval_list; do
                 bed="${{interval%.interval_list}}.bed"
-                sed 's/[:\-]/\t/g' "$interval" \
-                    | grep -v "^@" \
-                    | cut -f1-3 \
-                    > "$bed"
+                gatk IntervalListToBed -I "$interval" -O "$bed" 2>> {log}
             done
             """

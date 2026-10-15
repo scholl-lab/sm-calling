@@ -18,6 +18,7 @@ rule freebayes_call:
     input:
         reference=REF,
         bam_files=_get_germline_bam_paths(),
+        intervals=get_freebayes_interval_input,
     output:
         vcf=temp(os.path.join(FREEBAYES_SCATTER_DIR, "freebayes_{scatter_unit}.vcf.gz")),
     params:
@@ -26,7 +27,7 @@ rule freebayes_call:
     retries: 3
     resources:
         mem_mb=lambda wildcards, attempt: 16384 * (2 ** (attempt - 1)),
-        runtime=lambda wildcards, attempt: 4320 * attempt,
+        runtime=lambda wildcards, attempt: 1440 * attempt,
     conda:
         "../envs/freebayes.yaml"
     log:

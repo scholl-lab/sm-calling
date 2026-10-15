@@ -5,11 +5,14 @@ import os
 import pandas as pd
 
 from rules.helpers import (
+    build_interval_arg as _build_interval_arg_impl,
     build_mutect2_extra_args as _build_mutect2_extra_args_impl,
+    build_pon_interval_arg as _build_pon_interval_arg_impl,
     get_java_opts as _get_java_opts_impl,
     get_mutect2_samples as _get_mutect2_samples_impl,
     get_germline_samples as _get_germline_samples_impl,
     get_normal_bam_basenames as _get_normal_bam_basenames_impl,
+    get_tumor_bam_basenames as _get_tumor_bam_basenames_impl,
     get_unique_bam_basenames as _get_unique_bam_basenames_impl,
     has_matched_normal as _has_matched_normal_impl,
     get_scatter_units as _get_scatter_units_impl,
@@ -31,12 +34,14 @@ BAM_EXT = config["bam"]["file_extension"]
 SCATTER_MODE = config["scatter"]["mode"]
 SCATTER_COUNT = config["scatter"].get("count", 400)
 CHROMOSOMES = config["scatter"].get("chromosomes", [])
+TARGET_BED = config["scatter"].get("target_bed", "")
 
 INTERVALS_DIR = config["paths"].get("intervals_dir", os.path.join(OUTPUT_DIR, "intervals"))
 
 # GATK resources (optional for FreeBayes-only runs)
 GATK_RES = config.get("gatk_resources", {})
 PON = GATK_RES.get("panel_of_normals", "")
+PON_MASK_BED = GATK_RES.get("pon_mask_bed", "")
 AF_GNOMAD = GATK_RES.get("af_only_gnomad", "")
 COMMON_GNOMAD = GATK_RES.get("common_biallelic_gnomad", "")
 
@@ -50,6 +55,9 @@ MUTECT2_ALL_ARGS = _build_mutect2_extra_args_impl(
     annotation_groups=_m2_params.get("annotation_groups", []),
     extra=_m2_params.get("extra", ""),
 )
+FILTER_MUTECT_CALLS_EXTRA = (
+    config.get("params", {}).get("filter_mutect_calls", {}).get("extra", "")
+)
 FREEBAYES_EXTRA = config.get("params", {}).get("freebayes", {}).get("extra", "")
 BCFTOOLS_NORM_EXTRA = config.get("params", {}).get("bcftools_norm", {}).get("extra", "")
 BCFTOOLS_STATS_EXTRA = config.get("params", {}).get("bcftools_stats", {}).get("extra", "")
@@ -57,6 +65,7 @@ BCFTOOLS_STATS_EXTRA = config.get("params", {}).get("bcftools_stats", {}).get("e
 
 # -- Output subdirectories ---------------------------------------------------
 MUTECT2_DIR = os.path.join(OUTPUT_DIR, "mutect2")
+MUTECT2_PON_DIR = os.path.join(MUTECT2_DIR, "pon")
 MUTECT2_SCATTER_DIR = os.path.join(MUTECT2_DIR, "scattered")
 MUTECT2_MERGED_DIR = os.path.join(MUTECT2_DIR, "merged")
 MUTECT2_CONTAM_DIR = os.path.join(MUTECT2_DIR, "contamination")
@@ -69,7 +78,7 @@ QC_DIR = os.path.join(OUTPUT_DIR, "qc")
 
 
 # -- Scatter units -----------------------------------------------------------
-SCATTER_UNITS = _get_scatter_units_impl(SCATTER_MODE, CHROMOSOMES, SCATTER_COUNT)
+SCATTER_UNITS = _get_scatter_units_impl(SCATTER_MODE, CHROMOSOMES, SCATTER_COUNT, TARGET_BED)
 
 
 # -- Sample accessors (wrappers around helpers.py) ---------------------------
@@ -89,8 +98,21 @@ def get_normal_bams():
     return _get_normal_bam_basenames_impl(samples_df)
 
 
+def get_tumor_bams(sample):
+    return _get_tumor_bam_basenames_impl(samples_df, sample)
+
+
 def has_normal(sample):
     return _has_matched_normal_impl(samples_df, sample)
+
+
+def get_pon(wildcards=None):
+    """Return pre-built Panel of Normals or cohort-generated PoN VCF."""
+    if PON:
+        return PON
+    if PON_MASK_BED:
+        return os.path.join(MUTECT2_PON_DIR, "pon.masked.vcf.gz")
+    return os.path.join(MUTECT2_PON_DIR, "pon.vcf.gz")
 
 
 # -- Input helper functions --------------------------------------------------
@@ -99,9 +121,13 @@ def has_normal(sample):
 
 
 def get_tumor_bam(wildcards):
-    """Return full path to tumor BAM for a sample."""
-    row = samples_df.loc[wildcards.sample]
-    return os.path.join(BAM_FOLDER, row["tumor_bam"] + BAM_EXT)
+    """Return full path(s) to tumor BAM(s) for a sample."""
+    return [os.path.join(BAM_FOLDER, b + BAM_EXT) for b in get_tumor_bams(wildcards.sample)]
+
+
+def get_tumor_input_arg(wildcards):
+    """Return '-I tumor.bam [-I tumor2.bam ...]' arg for GATK Mutect2."""
+    return " ".join(f"-I {p}" for p in get_tumor_bam(wildcards))
 
 
 def get_normal_bam(wildcards):
@@ -111,46 +137,83 @@ def get_normal_bam(wildcards):
     """
     row = samples_df.loc[wildcards.sample]
     normal = row.get("normal_bam", "")
-    if normal and normal != "." and pd.notna(normal):
+    if (
+        row.get("analysis_type") == "tumor_normal"
+        and normal
+        and normal != "."
+        and pd.notna(normal)
+    ):
         return [os.path.join(BAM_FOLDER, normal + BAM_EXT)]
     return []
-
-
-def get_normal_name(wildcards):
-    """Return '-normal SAMPLE_NAME' arg or empty string."""
-    row = samples_df.loc[wildcards.sample]
-    normal = row.get("normal_bam", "")
-    if normal and normal != "." and pd.notna(normal):
-        return f"-normal {normal}"
-    return ""
 
 
 def get_normal_input_arg(wildcards):
     """Return '-I normal.bam' arg or empty string for GATK Mutect2."""
     row = samples_df.loc[wildcards.sample]
     normal = row.get("normal_bam", "")
-    if normal and normal != "." and pd.notna(normal):
-        return f"-I {os.path.join(BAM_FOLDER, normal + BAM_EXT)}"
+    if (
+        row.get("analysis_type") == "tumor_normal"
+        and normal
+        and normal != "."
+        and pd.notna(normal)
+    ):
+        normal_path = os.path.join(BAM_FOLDER, normal + BAM_EXT)
+        return f"-I {normal_path}"
     return ""
+
+
+def get_interval_input(wildcards):
+    """Return interval file input list for Mutect2 based on scatter mode."""
+    inputs = []
+    if SCATTER_MODE == "interval":
+        inputs.append(os.path.join(INTERVALS_DIR, f"{wildcards.scatter_unit}.interval_list"))
+    if TARGET_BED:
+        inputs.append(TARGET_BED)
+    return inputs
+
+
+def get_freebayes_interval_input(wildcards):
+    """Return BED file input list for FreeBayes based on scatter mode."""
+    if SCATTER_MODE == "interval":
+        return [os.path.join(INTERVALS_DIR, f"{wildcards.scatter_unit}.bed")]
+    if TARGET_BED:
+        return [TARGET_BED]
+    return []
 
 
 def get_interval_arg(wildcards):
-    """Return -L argument based on scatter mode and unit."""
-    unit = wildcards.scatter_unit
-    if SCATTER_MODE == "chromosome":
-        return f"-L {unit}"
-    elif SCATTER_MODE == "interval":
-        return f"-L {INTERVALS_DIR}/{unit}.interval_list"
-    return ""
+    """Return -L argument based on scatter mode, unit, and optional target_bed."""
+    return _build_interval_arg_impl(
+        SCATTER_MODE, wildcards.scatter_unit, INTERVALS_DIR, TARGET_BED
+    )
+
+
+def get_pon_interval_input(wildcards=None):
+    """Return interval file input list for PoN GenomicsDBImport."""
+    if TARGET_BED:
+        return [TARGET_BED]
+    if SCATTER_MODE == "chromosome" and SCATTER_UNITS:
+        return []
+    return [os.path.join(INTERVALS_DIR, "scattered.interval_list")]
+
+
+def get_pon_interval_arg(wildcards=None):
+    """Return -L argument(s) for PoN GenomicsDBImport."""
+    return _build_pon_interval_arg_impl(SCATTER_MODE, SCATTER_UNITS, INTERVALS_DIR, TARGET_BED)
 
 
 def get_freebayes_region_arg(wildcards):
     """Return FreeBayes region argument based on scatter mode."""
     unit = wildcards.scatter_unit
     if SCATTER_MODE == "chromosome":
+        if TARGET_BED:
+            # Intersect target_bed with chromosome (FreeBayes unions -r and --targets)
+            return f"--targets <(awk -F'\\t' -v c={unit} '$1 == c' {TARGET_BED})"
         return f"-r {unit}"
     elif SCATTER_MODE == "interval":
         return f"--targets {INTERVALS_DIR}/{unit}.bed"
+    elif TARGET_BED:
+        return f"--targets {TARGET_BED}"
     return ""
 
 
@@ -160,11 +223,11 @@ def get_java_opts(wildcards, resources):
 
 
 def get_tumor_pileup(wildcards):
-    """Return pileup table path for the tumor BAM of a sample."""
-    row = samples_df.loc[wildcards.sample]
+    """Return pileup table path for a (sample, bam_basename) pair."""
+    bam_basename = getattr(wildcards, "bam_basename", "") or get_tumor_bams(wildcards.sample)[0]
     return os.path.join(
         MUTECT2_CONTAM_DIR,
-        row["tumor_bam"] + ".getpileupsummaries.table",
+        bam_basename + ".getpileupsummaries.table",
     )
 
 
@@ -172,7 +235,12 @@ def get_normal_pileup(wildcards):
     """Return list with normal pileup path, or empty list if none."""
     row = samples_df.loc[wildcards.sample]
     normal = row.get("normal_bam", "")
-    if normal and normal != "." and pd.notna(normal):
+    if (
+        row.get("analysis_type") == "tumor_normal"
+        and normal
+        and normal != "."
+        and pd.notna(normal)
+    ):
         return [
             os.path.join(
                 MUTECT2_CONTAM_DIR,
@@ -180,6 +248,29 @@ def get_normal_pileup(wildcards):
             )
         ]
     return []
+
+
+def get_contamination_tables(wildcards):
+    """Return contamination table path(s) for all tumor BAMs of a sample."""
+    return [
+        os.path.join(MUTECT2_CONTAM_DIR, wildcards.sample, f"{b}.contamination.table")
+        for b in get_tumor_bams(wildcards.sample)
+    ]
+
+
+def get_segmentation_tables(wildcards):
+    """Return tumor segmentation table path(s) for all tumor BAMs of a sample."""
+    return [
+        os.path.join(MUTECT2_CONTAM_DIR, wildcards.sample, f"{b}.segments.table")
+        for b in get_tumor_bams(wildcards.sample)
+    ]
+
+
+def get_contamination_args(wildcards):
+    """Return --contamination-table and --tumor-segmentation flags for FilterMutectCalls."""
+    contam = " ".join(f"--contamination-table {p}" for p in get_contamination_tables(wildcards))
+    seg = " ".join(f"--tumor-segmentation {p}" for p in get_segmentation_tables(wildcards))
+    return f"{contam} {seg}"
 
 
 # -- PureCN config -----------------------------------------------------------
@@ -205,13 +296,9 @@ def get_qc_inputs():
     inputs = []
     if CALLER in ("mutect2", "all"):
         for sample in get_mutect2_sample_list():
-            inputs.append(
-                os.path.join(QC_DIR, "bcftools_stats", "mutect2", f"{sample}.stats.txt")
-            )
+            inputs.append(os.path.join(QC_DIR, "bcftools_stats", "mutect2", f"{sample}.stats.txt"))
     if CALLER in ("freebayes", "all"):
-        inputs.append(
-            os.path.join(QC_DIR, "bcftools_stats", "freebayes", "all_samples.stats.txt")
-        )
+        inputs.append(os.path.join(QC_DIR, "bcftools_stats", "freebayes", "all_samples.stats.txt"))
     return inputs
 
 
@@ -224,10 +311,11 @@ def get_final_outputs():
             outputs.append(os.path.join(MUTECT2_FILTERED_DIR, f"{sample}.filtered.vcf.gz"))
     if CALLER in ("freebayes", "all"):
         outputs.append(os.path.join(FREEBAYES_DIR, "final_merged.vcf.gz"))
-    # PureCN outputs (Mutect2 samples only)
+    # PureCN outputs (single-BAM Mutect2 samples only)
     if PURECN_ENABLED and CALLER in ("mutect2", "all"):
         for sample in get_mutect2_sample_list():
-            outputs.append(os.path.join(PURECN_RESULTS_DIR, sample, f"{sample}.csv"))
+            if len(get_tumor_bams(sample)) == 1:
+                outputs.append(os.path.join(PURECN_RESULTS_DIR, sample, f"{sample}.csv"))
     # QC report (always generated when there are outputs)
     if outputs:
         outputs.append(os.path.join(QC_DIR, "multiqc_report.html"))
