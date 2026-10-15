@@ -36,7 +36,11 @@ def get_unique_bam_basenames(samples_df: pd.DataFrame) -> list[str]:
     for _, row in samples_df.iterrows():
         if row["tumor_bam"] and row["tumor_bam"] != ".":
             bams.add(row["tumor_bam"])
-        if pd.notna(row.get("normal_bam")) and row["normal_bam"] not in ("", "."):
+        if (
+            row.get("analysis_type") == "tumor_normal"
+            and pd.notna(row.get("normal_bam"))
+            and row["normal_bam"] not in ("", ".")
+        ):
             bams.add(row["normal_bam"])
     return sorted(bams)
 
@@ -44,8 +48,45 @@ def get_unique_bam_basenames(samples_df: pd.DataFrame) -> list[str]:
 def has_matched_normal(samples_df: pd.DataFrame, sample: str) -> bool:
     """Check whether a sample has a matched normal BAM."""
     row = samples_df.loc[samples_df["sample"] == sample].iloc[0]
+    if row.get("analysis_type") != "tumor_normal":
+        return False
     normal = row.get("normal_bam", "")
     return bool(normal) and normal != "." and pd.notna(normal)
+
+
+def validate_samples_df(samples_df: pd.DataFrame) -> None:
+    """Validate sample sheet invariants beyond per-row JSON schema checks."""
+    if samples_df["sample"].duplicated().any() or samples_df.index.duplicated().any():
+        dups = sorted(
+            samples_df.loc[samples_df["sample"].duplicated(), "sample"].astype(str).unique()
+        )
+        raise ValueError(f"Duplicate sample IDs in samples.tsv: {dups}")
+
+    for _, row in samples_df.iterrows():
+        sample = row.get("sample", "")
+        tumor = row.get("tumor_bam", "")
+        normal = row.get("normal_bam", "")
+        analysis_type = row.get("analysis_type", "")
+
+        if not isinstance(sample, str) or not isinstance(tumor, str):
+            raise ValueError(
+                "Sample and BAM identifiers must be strings (read samples.tsv with dtype=str)"
+            )
+        if not sample or sample == "." or not tumor or tumor == ".":
+            raise ValueError(f"Sample '{sample}' has empty or '.' sample/tumor_bam")
+
+        has_normal_bam = bool(normal) and normal != "." and pd.notna(normal)
+        if has_normal_bam and not isinstance(normal, str):
+            raise ValueError("normal_bam must be a string (read samples.tsv with dtype=str)")
+        if analysis_type == "tumor_normal" and not has_normal_bam:
+            raise ValueError(
+                f"Sample '{sample}' has analysis_type='tumor_normal' but missing normal_bam"
+            )
+        if analysis_type != "tumor_normal" and has_normal_bam:
+            raise ValueError(
+                f"Sample '{sample}' has analysis_type='{analysis_type}' "
+                f"but normal_bam='{normal}' is provided"
+            )
 
 
 def get_scatter_units(
@@ -95,7 +136,12 @@ def get_normal_bam_basenames(samples_df: pd.DataFrame) -> list[str]:
     normals: set[str] = set()
     for _, row in samples_df.iterrows():
         normal = row.get("normal_bam", "")
-        if normal and normal != "." and pd.notna(normal):
+        if (
+            row.get("analysis_type") == "tumor_normal"
+            and normal
+            and normal != "."
+            and pd.notna(normal)
+        ):
             normals.add(normal)
     return sorted(normals)
 

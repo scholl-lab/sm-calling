@@ -16,6 +16,7 @@ from helpers import (
     get_scatter_units,
     get_unique_bam_basenames,
     has_matched_normal,
+    validate_samples_df,
 )
 
 
@@ -76,6 +77,19 @@ class TestHasMatchedNormal:
 
     def test_germline(self, samples_df):
         assert has_matched_normal(samples_df, "IND003_G") is False
+
+    def test_tumor_only_ignores_normal_bam(self):
+        import pandas as pd
+
+        df = pd.DataFrame(
+            {
+                "sample": ["S1"],
+                "tumor_bam": ["S1.T"],
+                "normal_bam": ["S1.N"],
+                "analysis_type": ["tumor_only"],
+            }
+        ).set_index("sample", drop=False)
+        assert has_matched_normal(df, "S1") is False
 
 
 class TestGetScatterUnits:
@@ -319,4 +333,71 @@ class TestMutect2CallSmResolution:
             tumor_headers={"APA1_T.bam": "@RG\tID:1\tSM:S1\n@RG\tID:2\tSM:S2\n"},
         )
         assert res_multi.returncode != 0
+
+
+class TestValidateSamplesDf:
+    def test_valid_samples_df(self, samples_df):
+        validate_samples_df(samples_df)
+
+    def test_duplicate_sample_rejected(self):
+        import pandas as pd
+        import pytest
+
+        df = pd.DataFrame(
+            {
+                "sample": ["S1", "S1"],
+                "tumor_bam": ["S1.T1", "S1.T2"],
+                "normal_bam": [".", "."],
+                "analysis_type": ["tumor_only", "tumor_only"],
+            }
+        ).set_index("sample", drop=False)
+        with pytest.raises(ValueError, match="Duplicate sample"):
+            validate_samples_df(df)
+
+    def test_numeric_ids_read_as_str_and_non_str_rejected(self, tmp_path):
+        import pandas as pd
+        import pytest
+
+        tsv = tmp_path / "samples.tsv"
+        tsv.write_text("sample\ttumor_bam\tnormal_bam\tanalysis_type\n1001\t2001\t3001\ttumor_normal\n")
+        df_str = pd.read_table(tsv, dtype=str, keep_default_na=False).set_index(
+            "sample", drop=False, verify_integrity=True
+        )
+        validate_samples_df(df_str)
+        assert df_str.loc["1001", "tumor_bam"] == "2001"
+        assert has_matched_normal(df_str, "1001") is True
+
+        df_int = pd.read_table(tsv).set_index("sample", drop=False)
+        with pytest.raises(ValueError, match="strings"):
+            validate_samples_df(df_int)
+
+    def test_tumor_normal_missing_normal_rejected(self):
+        import pandas as pd
+        import pytest
+
+        df = pd.DataFrame(
+            {
+                "sample": ["S1"],
+                "tumor_bam": ["S1.T"],
+                "normal_bam": ["."],
+                "analysis_type": ["tumor_normal"],
+            }
+        ).set_index("sample", drop=False)
+        with pytest.raises(ValueError, match="missing normal_bam"):
+            validate_samples_df(df)
+
+    def test_tumor_only_with_normal_rejected(self):
+        import pandas as pd
+        import pytest
+
+        df = pd.DataFrame(
+            {
+                "sample": ["S1"],
+                "tumor_bam": ["S1.T"],
+                "normal_bam": ["S1.N"],
+                "analysis_type": ["tumor_only"],
+            }
+        ).set_index("sample", drop=False)
+        with pytest.raises(ValueError, match="tumor_only"):
+            validate_samples_df(df)
 

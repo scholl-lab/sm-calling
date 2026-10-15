@@ -111,17 +111,26 @@ def get_normal_bam(wildcards):
     """
     row = samples_df.loc[wildcards.sample]
     normal = row.get("normal_bam", "")
-    if normal and normal != "." and pd.notna(normal):
+    if (
+        row.get("analysis_type") == "tumor_normal"
+        and normal
+        and normal != "."
+        and pd.notna(normal)
+    ):
         return [os.path.join(BAM_FOLDER, normal + BAM_EXT)]
     return []
-
 
 
 def get_normal_input_arg(wildcards):
     """Return '-I normal.bam' arg or empty string for GATK Mutect2."""
     row = samples_df.loc[wildcards.sample]
     normal = row.get("normal_bam", "")
-    if normal and normal != "." and pd.notna(normal):
+    if (
+        row.get("analysis_type") == "tumor_normal"
+        and normal
+        and normal != "."
+        and pd.notna(normal)
+    ):
         return f"-I {os.path.join(BAM_FOLDER, normal + BAM_EXT)}"
     return ""
 
@@ -164,7 +173,12 @@ def get_normal_pileup(wildcards):
     """Return list with normal pileup path, or empty list if none."""
     row = samples_df.loc[wildcards.sample]
     normal = row.get("normal_bam", "")
-    if normal and normal != "." and pd.notna(normal):
+    if (
+        row.get("analysis_type") == "tumor_normal"
+        and normal
+        and normal != "."
+        and pd.notna(normal)
+    ):
         return [
             os.path.join(
                 MUTECT2_CONTAM_DIR,
