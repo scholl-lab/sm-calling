@@ -1,7 +1,7 @@
 """Unit tests for workflow/rules/helpers.py."""
 
-import sys
 import os
+import sys
 
 # Add workflow and workflow/rules to the path so helpers.py and rules.helpers can be imported
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "workflow"))
@@ -324,6 +324,17 @@ class TestMutect2CallSmResolution:
         )
         assert res.returncode != 0
 
+    def test_fails_when_multiple_tumor_bams_share_duplicate_sm(self, tmp_path):
+        res, _ = self._run_mutect2_shell(
+            tmp_path,
+            tumor_headers={
+                "T1.bam": "@RG\tID:1\tSM:SAME_TUMOR_SM\n",
+                "T2.bam": "@RG\tID:2\tSM:SAME_TUMOR_SM\n",
+            },
+            normal_header="@RG\tID:3\tSM:NORMAL_SM\n",
+        )
+        assert res.returncode != 0
+
     def test_fails_on_missing_or_multisample_sm(self, tmp_path):
         res_empty, _ = self._run_mutect2_shell(
             tmp_path,
@@ -362,7 +373,9 @@ class TestValidateSamplesDf:
         import pytest
 
         tsv = tmp_path / "samples.tsv"
-        tsv.write_text("sample\ttumor_bam\tnormal_bam\tanalysis_type\n1001\t2001\t3001\ttumor_normal\n")
+        tsv.write_text(
+            "sample\ttumor_bam\tnormal_bam\tanalysis_type\n1001\t2001\t3001\ttumor_normal\n"
+        )
         df_str = pd.read_table(tsv, dtype=str, keep_default_na=False).set_index(
             "sample", drop=False, verify_integrity=True
         )
@@ -418,7 +431,8 @@ class TestScatterIntervalsAndTargetBed:
         )
         assert build_interval_arg("none", "all", target_bed="targets.bed") == "-L targets.bed"
 
-    def test_split_intervals_dag_and_bed_conversion(self, config_dict, samples_df):
+    def test_split_intervals_dag_and_bed_conversion(self, tmp_path, config_dict, samples_df):
+        import subprocess
         from pathlib import Path
 
         cfg = dict(config_dict)
@@ -436,6 +450,37 @@ class TestScatterIntervalsAndTargetBed:
             "/output/intervals/0000-scattered.bed",
         ]
 
+        target_bed_path = tmp_path / "targets.bed"
+        target_bed_path.write_text("chr1\t100\t200\nchr2\t300\t400\n")
+        cfg_chr = dict(config_dict)
+        cfg_chr["scatter"] = {
+            "mode": "chromosome",
+            "chromosomes": ["chr1", "chr2"],
+            "target_bed": str(target_bed_path),
+        }
+        ns_chr = {"config": cfg_chr, "samples_df": samples_df}
+        exec(common_code, ns_chr)
+        wc_chr = _DefaultNamespace(scatter_unit="chr1")
+        assert ns_chr["get_freebayes_interval_input"](wc_chr) == [str(target_bed_path)]
+        region_arg = ns_chr["get_freebayes_region_arg"](wc_chr)
+        assert "-r " not in region_arg
+        assert "--targets <(awk" in region_arg
+
+        captured_targets = tmp_path / "captured_targets.bed"
+        res = subprocess.run(
+            [
+                "bash",
+                "-euo",
+                "pipefail",
+                "-c",
+                f'capture() {{ cat "$2" > "{captured_targets}"; }}; capture {region_arg}',
+            ],
+            capture_output=True,
+            text=True,
+        )
+        assert res.returncode == 0
+        assert captured_targets.read_text() == "chr1\t100\t200\n"
+
         split_shell = _extract_rule_shell("workflow/rules/scatter.smk", "split_intervals")
         assert 'gatk IntervalListToBed -I "$interval" -O "$bed"' in split_shell
         assert "sed '" not in split_shell
@@ -445,13 +490,16 @@ class TestScatterIntervalsAndTargetBed:
         assert "--interval-set-rule INTERSECTION" in mutect2_text
         assert "360 * attempt" in mutect2_text
 
-        freebayes_text = (Path(__file__).parent.parent / "workflow/rules/freebayes.smk").read_text()
+        freebayes_text = (
+            Path(__file__).parent.parent / "workflow/rules/freebayes.smk"
+        ).read_text()
         assert "intervals=get_freebayes_interval_input" in freebayes_text
 
 
 class TestProfilesAndResources:
     def test_bih_and_default_profiles_no_mem_conflict_or_static_override(self):
         from pathlib import Path
+
         import yaml
 
         root = Path(__file__).parent.parent
@@ -470,9 +518,17 @@ class TestProfilesAndResources:
         from pathlib import Path
 
         root = Path(__file__).parent.parent
-        for smk in ["workflow/rules/mutect2.smk", "workflow/rules/freebayes.smk", "workflow/rules/purecn.smk"]:
+        for smk in [
+            "workflow/rules/mutect2.smk",
+            "workflow/rules/freebayes.smk",
+            "workflow/rules/purecn.smk",
+        ]:
             text = (root / smk).read_text()
-            for m in re.finditer(r"retries:\s*(\d+).*?runtime=lambda wildcards, attempt:\s*(\d+)\s*\*\s*attempt", text, re.S):
+            for m in re.finditer(
+                r"retries:\s*(\d+).*?runtime=lambda wildcards, attempt:\s*(\d+)\s*\*\s*attempt",
+                text,
+                re.S,
+            ):
                 retries = int(m.group(1))
                 base_runtime = int(m.group(2))
                 assert base_runtime * (retries + 1) <= 10080
@@ -490,8 +546,9 @@ class TestFilterMutectCallsNormAndExtra:
     def test_extra_passthrough_and_bcftools_norm_without_atomize(
         self, tmp_path, config_dict, samples_df
     ):
-        from pathlib import Path
         import subprocess
+        from pathlib import Path
+
         import yaml
 
         cfg = dict(config_dict)
@@ -538,7 +595,10 @@ class TestFilterMutectCallsNormAndExtra:
             params=_DefaultNamespace(
                 java_opts="-Xmx4g",
                 extra=ns["FILTER_MUTECT_CALLS_EXTRA"],
-                contam_args="--contamination-table S1.contamination.table --tumor-segmentation S1.segments.table",
+                contam_args=(
+                    "--contamination-table S1.contamination.table "
+                    "--tumor-segmentation S1.segments.table"
+                ),
             ),
             log=str(tmp_path / "filter.log"),
         )
@@ -564,24 +624,29 @@ class TestFilterMutectCallsNormAndExtra:
 
 
 class TestCohortPonAndHotspotMasking:
-    def test_in_pon_filtering_and_cohort_pon_dag_with_hotspot_masking(
-        self, tmp_path, config_dict
-    ):
-        from pathlib import Path
+    def test_in_pon_filtering_and_cohort_pon_dag_with_hotspot_masking(self, tmp_path, config_dict):
         import subprocess
+        from pathlib import Path
+
         import pandas as pd
 
         df = pd.DataFrame(
             {
-                "sample": ["S1", "S2", "S3"],
-                "tumor_bam": ["S1.T", "S2.T", "S3.T"],
-                "normal_bam": ["S1.N", "S2.N", "."],
-                "analysis_type": ["tumor_normal", "tumor_normal", "tumor_only"],
-                "in_pon": ["yes", "no", "no"],
+                "sample": ["S1", "S2", "S3", "G1", "G2"],
+                "tumor_bam": ["S1.T", "S2.T", "S3.T", "G1.N", "G2.N"],
+                "normal_bam": ["S1.N", "S2.N", ".", ".", "."],
+                "analysis_type": [
+                    "tumor_normal",
+                    "tumor_normal",
+                    "tumor_only",
+                    "germline",
+                    "germline",
+                ],
+                "in_pon": ["yes", "no", "no", "yes", "no"],
             }
         ).set_index("sample", drop=False)
 
-        assert get_normal_bam_basenames(df) == ["S1.N"]
+        assert get_normal_bam_basenames(df) == ["G1.N", "S1.N"]
 
         root = Path(__file__).parent.parent
         cfg = dict(config_dict)
@@ -594,7 +659,7 @@ class TestCohortPonAndHotspotMasking:
         exec((root / "workflow/rules/common.smk").read_text(), ns)
 
         assert ns["get_pon"]() == "/output/mutect2/pon/pon.masked.vcf.gz"
-        assert ns["get_normal_bams"]() == ["S1.N"]
+        assert ns["get_normal_bams"]() == ["G1.N", "S1.N"]
 
         cfg_unmasked = dict(config_dict)
         cfg_unmasked["gatk_resources"] = {
@@ -652,11 +717,10 @@ class TestCohortPonAndHotspotMasking:
 
 
 class TestMultiRegionTumorBams:
-    def test_semicolon_delimited_tumor_bams_and_filter_mutect_calls(
-        self, tmp_path, config_dict
-    ):
-        from pathlib import Path
+    def test_semicolon_delimited_tumor_bams_and_filter_mutect_calls(self, tmp_path, config_dict):
         import subprocess
+        from pathlib import Path
+
         import pandas as pd
 
         df = pd.DataFrame(
@@ -688,12 +752,12 @@ class TestMultiRegionTumorBams:
             == "-I /bams/T1.merged.dedup.bqsr.bam -I /bams/T2.merged.dedup.bqsr.bam"
         )
         assert ns["get_contamination_tables"](wc) == [
-            "/output/mutect2/contamination/MR1_T1.contamination.table",
-            "/output/mutect2/contamination/MR1_T2.contamination.table",
+            "/output/mutect2/contamination/MR1/T1.contamination.table",
+            "/output/mutect2/contamination/MR1/T2.contamination.table",
         ]
         assert ns["get_segmentation_tables"](wc) == [
-            "/output/mutect2/contamination/MR1_T1.segments.table",
-            "/output/mutect2/contamination/MR1_T2.segments.table",
+            "/output/mutect2/contamination/MR1/T1.segments.table",
+            "/output/mutect2/contamination/MR1/T2.segments.table",
         ]
 
         final_outs = ns["get_final_outputs"]()
@@ -753,3 +817,119 @@ class TestMultiRegionTumorBams:
         assert f_args.count("--tumor-segmentation") == 2
 
 
+class TestSnakemakeDryRun:
+    def test_snakemake_dryrun_interval_pon_and_underscored_multiregion(self, tmp_path):
+        import shutil
+        import subprocess
+        from pathlib import Path
+
+        import pytest
+        import yaml
+
+        snakemake_bin = shutil.which("snakemake") or "/tmp/sm-venv/bin/snakemake"
+        if not Path(snakemake_bin).exists():
+            pytest.skip("snakemake binary not available")
+
+        root = Path(__file__).parent.parent
+        bam_dir = tmp_path / "bams"
+        bam_dir.mkdir()
+        for bn in (
+            "APA_1_T1",
+            "APA_1_T2",
+            "APA_1_N",
+            "APA_2_T",
+            "APA_2_N",
+            "GERM_1_N",
+            "GERM_2_N",
+        ):
+            (bam_dir / f"{bn}.merged.dedup.bqsr.bam").write_text("")
+
+        ref_fa = tmp_path / "ref.fa"
+        ref_fa.write_text(">chr1\nACGT\n")
+        gnomad_vcf = tmp_path / "gnomad.vcf.gz"
+        gnomad_vcf.write_text("")
+        common_gnomad_vcf = tmp_path / "common_gnomad.vcf.gz"
+        common_gnomad_vcf.write_text("")
+        target_bed = tmp_path / "targets.bed"
+        target_bed.write_text("chr1\t0\t4\n")
+        mask_bed = tmp_path / "hotspots_pad15.bed"
+        mask_bed.write_text("chr1\t1\t2\n")
+
+        samples_tsv = tmp_path / "samples.tsv"
+        samples_tsv.write_text(
+            "sample\ttumor_bam\tnormal_bam\tanalysis_type\tin_pon\n"
+            "APA_1\tAPA_1_T1;APA_1_T2\tAPA_1_N\ttumor_normal\tyes\n"
+            "APA_2\tAPA_2_T\tAPA_2_N\ttumor_normal\tno\n"
+            "GERM_1\tGERM_1_N\t.\tgermline\tyes\n"
+            "GERM_2\tGERM_2_N\t.\tgermline\tno\n"
+        )
+
+        cfg = {
+            "caller": "all",
+            "paths": {
+                "samples": str(samples_tsv),
+                "bam_folder": str(bam_dir),
+                "output_folder": str(tmp_path / "out"),
+                "log_subdir": "logs",
+            },
+            "ref": {
+                "genome": str(ref_fa),
+                "build": "GRCh38",
+            },
+            "bam": {
+                "file_extension": ".merged.dedup.bqsr.bam",
+            },
+            "gatk_resources": {
+                "af_only_gnomad": str(gnomad_vcf),
+                "panel_of_normals": "",
+                "pon_mask_bed": str(mask_bed),
+                "common_biallelic_gnomad": str(common_gnomad_vcf),
+            },
+            "scatter": {
+                "mode": "interval",
+                "count": 2,
+                "chromosomes": ["chr1"],
+                "target_bed": str(target_bed),
+            },
+        }
+        cfg_file = tmp_path / "config.yaml"
+        cfg_file.write_text(yaml.safe_dump(cfg))
+
+        res = subprocess.run(
+            [
+                snakemake_bin,
+                "-s",
+                str(root / "workflow/Snakefile"),
+                "--configfile",
+                str(cfg_file),
+                "--workflow-profile",
+                str(root / "profiles/default"),
+                "--profile",
+                str(root / "profiles/bih"),
+                "--executor",
+                "dryrun",
+                "-n",
+                "-p",
+            ],
+            cwd=str(tmp_path),
+            capture_output=True,
+            text=True,
+        )
+        assert res.returncode == 0, res.stderr + "\n" + res.stdout
+        out = res.stdout
+
+        assert "rule split_intervals:" in out
+        assert "rule pon_mutect2:" in out
+        assert "APA_1_N.pon.vcf.gz" in out
+        assert "GERM_1_N.pon.vcf.gz" in out
+        assert "APA_2_N.pon.vcf.gz" not in out
+        assert "GERM_2_N.pon.vcf.gz" not in out
+        assert "rule pon_genomicsdb:" in out
+        assert "rule pon_create:" in out
+        assert "rule pon_mask_hotspots:" in out
+        assert "APA_1/APA_1_T1.contamination.table" in out
+        assert "APA_1/APA_1_T2.contamination.table" in out
+        assert "APA_2/APA_2_T.contamination.table" in out
+        assert "--matched " in out
+        assert "APA_1_N.getpileupsummaries.table" in out
+        assert "APA_2_N.getpileupsummaries.table" in out

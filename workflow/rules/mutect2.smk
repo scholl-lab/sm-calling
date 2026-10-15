@@ -51,8 +51,7 @@ rule pon_genomicsdb:
     """Combine per-normal PoN VCFs into a GenomicsDB workspace."""
     input:
         vcfs=lambda wc: [
-            os.path.join(MUTECT2_PON_DIR, f"{bn}.pon.vcf.gz")
-            for bn in get_normal_bams()
+            os.path.join(MUTECT2_PON_DIR, f"{bn}.pon.vcf.gz") for bn in get_normal_bams()
         ],
         reference=REF,
         target_bed=[TARGET_BED] if TARGET_BED else [],
@@ -61,13 +60,10 @@ rule pon_genomicsdb:
     params:
         java_opts=get_java_opts,
         vcf_args=lambda wc: " ".join(
-            f"-V {os.path.join(MUTECT2_PON_DIR, f'{bn}.pon.vcf.gz')}"
-            for bn in get_normal_bams()
+            f"-V {MUTECT2_PON_DIR}/{bn}.pon.vcf.gz" for bn in get_normal_bams()
         ),
         interval_arg=(
-            f"-L {TARGET_BED}"
-            if TARGET_BED
-            else " ".join(f"-L {c}" for c in CHROMOSOMES)
+            f"-L {TARGET_BED}" if TARGET_BED else " ".join(f"-L {c}" for c in CHROMOSOMES)
         ),
     retries: 2
     resources:
@@ -207,6 +203,10 @@ rule mutect2_call:
             tsm=$(extract_sm "$tbam") 2>> {log}
             tumor_sms+=("$tsm")
         done
+        if [ "$(printf '%s\n' "${{tumor_sms[@]}}" | sort -u | wc -l)" -ne "${{#tumor_sms[@]}}" ]; then
+            echo "ERROR: duplicate tumor @RG SM tags in: ${{tumor_sms[*]}}" >> {log}
+            exit 1
+        fi
         normal_arg=()
         if [ -n "{input.normal_bam}" ]; then
             normal_sm=$(extract_sm "{input.normal_bam}") 2>> {log}
@@ -247,8 +247,7 @@ rule gather_mutect2_vcfs:
         tbi=os.path.join(MUTECT2_MERGED_DIR, "{sample}.vcf.gz.tbi"),
     params:
         input_args=lambda wc: " ".join(
-            f"-I {os.path.join(MUTECT2_SCATTER_DIR, f'{wc.sample}_{unit}.vcf.gz')}"
-            for unit in SCATTER_UNITS
+            f"-I {MUTECT2_SCATTER_DIR}/{wc.sample}_{unit}.vcf.gz" for unit in SCATTER_UNITS
         ),
         java_opts=get_java_opts,
     retries: 2
@@ -286,7 +285,7 @@ rule merge_mutect2_stats:
         stats=os.path.join(MUTECT2_MERGED_DIR, "{sample}.vcf.gz.stats"),
     params:
         input_args=lambda wc: " ".join(
-            f"-stats {os.path.join(MUTECT2_SCATTER_DIR, f'{wc.sample}_{unit}.vcf.gz.stats')}"
+            f"-stats {MUTECT2_SCATTER_DIR}/{wc.sample}_{unit}.vcf.gz.stats"
             for unit in SCATTER_UNITS
         ),
         java_opts=get_java_opts,
@@ -323,8 +322,7 @@ rule learn_read_orientation:
         model=os.path.join(MUTECT2_MERGED_DIR, "{sample}_read-orientation-model.tar.gz"),
     params:
         input_args=lambda wc: " ".join(
-            f"-I {os.path.join(MUTECT2_SCATTER_DIR, f'{wc.sample}_{unit}.f1r2.tar.gz')}"
-            for unit in SCATTER_UNITS
+            f"-I {MUTECT2_SCATTER_DIR}/{wc.sample}_{unit}.f1r2.tar.gz" for unit in SCATTER_UNITS
         ),
         java_opts=get_java_opts,
     retries: 2
@@ -357,9 +355,7 @@ rule get_pileup_summaries:
         table=os.path.join(MUTECT2_CONTAM_DIR, "{bam_basename}.getpileupsummaries.table"),
     params:
         java_opts=get_java_opts,
-        interval_arg=(
-            f"-L {TARGET_BED} --interval-set-rule INTERSECTION" if TARGET_BED else ""
-        ),
+        interval_arg=(f"-L {TARGET_BED} --interval-set-rule INTERSECTION" if TARGET_BED else ""),
     retries: 2
     resources:
         mem_mb=lambda wildcards, attempt: 17600 * attempt,
@@ -390,11 +386,9 @@ rule calculate_contamination:
         normal_pileup=get_normal_pileup,
     output:
         contamination=os.path.join(
-            MUTECT2_CONTAM_DIR, "{sample}_{bam_basename}.contamination.table"
+            MUTECT2_CONTAM_DIR, "{sample}/{bam_basename}.contamination.table"
         ),
-        segments=os.path.join(
-            MUTECT2_CONTAM_DIR, "{sample}_{bam_basename}.segments.table"
-        ),
+        segments=os.path.join(MUTECT2_CONTAM_DIR, "{sample}/{bam_basename}.segments.table"),
     params:
         java_opts=get_java_opts,
         matched_arg=lambda wc: (
@@ -407,11 +401,9 @@ rule calculate_contamination:
     conda:
         "../envs/gatk.yaml"
     log:
-        os.path.join(LOG_DIR, "calculate_contamination/{sample}_{bam_basename}.log"),
+        os.path.join(LOG_DIR, "calculate_contamination/{sample}/{bam_basename}.log"),
     benchmark:
-        os.path.join(
-            LOG_DIR, "benchmarks/calculate_contamination/{sample}_{bam_basename}.tsv"
-        )
+        os.path.join(LOG_DIR, "benchmarks/calculate_contamination/{sample}/{bam_basename}.tsv")
     shell:
         r"""
         gatk --java-options '{params.java_opts}' CalculateContamination \

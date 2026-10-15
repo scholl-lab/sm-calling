@@ -170,20 +170,22 @@ def get_normal_bam_basenames(samples_df: pd.DataFrame) -> list[str]:
     has_in_pon = "in_pon" in samples_df.columns
     normals: set[str] = set()
     for _, row in samples_df.iterrows():
-        if has_in_pon and str(row.get("in_pon", "")).strip().lower() not in (
+        in_pon = str(row.get("in_pon", "")).strip().lower() in (
             "yes",
             "true",
             "1",
-        ):
+        )
+        if has_in_pon and not in_pon:
             continue
+        analysis_type = row.get("analysis_type")
         normal = row.get("normal_bam", "")
-        if (
-            row.get("analysis_type") == "tumor_normal"
-            and normal
-            and normal != "."
-            and pd.notna(normal)
-        ):
+        if analysis_type == "tumor_normal" and normal and normal != "." and pd.notna(normal):
             normals.add(normal)
+        elif has_in_pon and in_pon and analysis_type == "germline":
+            for b in str(row.get("tumor_bam", "")).split(";"):
+                b = b.strip()
+                if b and b != ".":
+                    normals.add(b)
     return sorted(normals)
 
 

@@ -121,10 +121,7 @@ def get_pon(wildcards=None):
 
 def get_tumor_bam(wildcards):
     """Return full path(s) to tumor BAM(s) for a sample."""
-    return [
-        os.path.join(BAM_FOLDER, b + BAM_EXT)
-        for b in get_tumor_bams(wildcards.sample)
-    ]
+    return [os.path.join(BAM_FOLDER, b + BAM_EXT) for b in get_tumor_bams(wildcards.sample)]
 
 
 def get_tumor_input_arg(wildcards):
@@ -159,7 +156,8 @@ def get_normal_input_arg(wildcards):
         and normal != "."
         and pd.notna(normal)
     ):
-        return f"-I {os.path.join(BAM_FOLDER, normal + BAM_EXT)}"
+        normal_path = os.path.join(BAM_FOLDER, normal + BAM_EXT)
+        return f"-I {normal_path}"
     return ""
 
 
@@ -177,7 +175,7 @@ def get_freebayes_interval_input(wildcards):
     """Return BED file input list for FreeBayes based on scatter mode."""
     if SCATTER_MODE == "interval":
         return [os.path.join(INTERVALS_DIR, f"{wildcards.scatter_unit}.bed")]
-    if SCATTER_MODE == "none" and TARGET_BED:
+    if TARGET_BED:
         return [TARGET_BED]
     return []
 
@@ -193,6 +191,9 @@ def get_freebayes_region_arg(wildcards):
     """Return FreeBayes region argument based on scatter mode."""
     unit = wildcards.scatter_unit
     if SCATTER_MODE == "chromosome":
+        if TARGET_BED:
+            # Intersect target_bed with chromosome (FreeBayes unions -r and --targets)
+            return f"--targets <(awk -F'\\t' -v c={unit} '$1 == c' {TARGET_BED})"
         return f"-r {unit}"
     elif SCATTER_MODE == "interval":
         return f"--targets {INTERVALS_DIR}/{unit}.bed"
@@ -237,7 +238,7 @@ def get_normal_pileup(wildcards):
 def get_contamination_tables(wildcards):
     """Return contamination table path(s) for all tumor BAMs of a sample."""
     return [
-        os.path.join(MUTECT2_CONTAM_DIR, f"{wildcards.sample}_{b}.contamination.table")
+        os.path.join(MUTECT2_CONTAM_DIR, wildcards.sample, f"{b}.contamination.table")
         for b in get_tumor_bams(wildcards.sample)
     ]
 
@@ -245,19 +246,15 @@ def get_contamination_tables(wildcards):
 def get_segmentation_tables(wildcards):
     """Return tumor segmentation table path(s) for all tumor BAMs of a sample."""
     return [
-        os.path.join(MUTECT2_CONTAM_DIR, f"{wildcards.sample}_{b}.segments.table")
+        os.path.join(MUTECT2_CONTAM_DIR, wildcards.sample, f"{b}.segments.table")
         for b in get_tumor_bams(wildcards.sample)
     ]
 
 
 def get_contamination_args(wildcards):
     """Return --contamination-table and --tumor-segmentation flags for FilterMutectCalls."""
-    contam = " ".join(
-        f"--contamination-table {p}" for p in get_contamination_tables(wildcards)
-    )
-    seg = " ".join(
-        f"--tumor-segmentation {p}" for p in get_segmentation_tables(wildcards)
-    )
+    contam = " ".join(f"--contamination-table {p}" for p in get_contamination_tables(wildcards))
+    seg = " ".join(f"--tumor-segmentation {p}" for p in get_segmentation_tables(wildcards))
     return f"{contam} {seg}"
 
 
@@ -284,13 +281,9 @@ def get_qc_inputs():
     inputs = []
     if CALLER in ("mutect2", "all"):
         for sample in get_mutect2_sample_list():
-            inputs.append(
-                os.path.join(QC_DIR, "bcftools_stats", "mutect2", f"{sample}.stats.txt")
-            )
+            inputs.append(os.path.join(QC_DIR, "bcftools_stats", "mutect2", f"{sample}.stats.txt"))
     if CALLER in ("freebayes", "all"):
-        inputs.append(
-            os.path.join(QC_DIR, "bcftools_stats", "freebayes", "all_samples.stats.txt")
-        )
+        inputs.append(os.path.join(QC_DIR, "bcftools_stats", "freebayes", "all_samples.stats.txt"))
     return inputs
 
 
