@@ -4,3 +4,5 @@ channels:
 dependencies:
   - gatk4=4.6.1.0
   - samtools=1.21
+  - bcftools=1.21
+  - htslib=1.21

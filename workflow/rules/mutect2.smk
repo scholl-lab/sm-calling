@@ -279,8 +279,10 @@ rule filter_mutect_calls:
             protected(os.path.join(MUTECT2_FILTERED_DIR, "{sample}.filtered.vcf.gz")),
             non_empty=True,
         ),
+        tbi=protected(os.path.join(MUTECT2_FILTERED_DIR, "{sample}.filtered.vcf.gz.tbi")),
     params:
         java_opts=get_java_opts,
+        extra=FILTER_MUTECT_CALLS_EXTRA,
     retries: 2
     resources:
         mem_mb=lambda wildcards, attempt: 17600 * attempt,
@@ -293,6 +295,9 @@ rule filter_mutect_calls:
         os.path.join(LOG_DIR, "benchmarks/filter_mutect/{sample}.tsv")
     shell:
         r"""
+        tmp_vcf="{output.vcf}.raw.vcf.gz"
+        trap 'rm -f "$tmp_vcf" "$tmp_vcf.tbi" "$tmp_vcf.filteringStats.tsv"' EXIT
+
         gatk --java-options '{params.java_opts}' FilterMutectCalls \
             -R {input.reference} \
             -V {input.vcf} \
@@ -300,6 +305,16 @@ rule filter_mutect_calls:
             --contamination-table {input.contamination} \
             --tumor-segmentation {input.segmentation} \
             --ob-priors {input.ob_priors} \
-            -O {output.vcf} \
+            {params.extra} \
+            -O "$tmp_vcf" \
             2> {log}
+
+        bcftools norm \
+            -m-any \
+            -f {input.reference} \
+            -Oz \
+            -W=tbi \
+            -o {output.vcf} \
+            "$tmp_vcf" \
+            2>> {log}
         """

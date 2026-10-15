@@ -485,3 +485,80 @@ class TestProfilesAndResources:
         assert gatk_args[idx + 1] == "4"
 
 
+class TestFilterMutectCallsNormAndExtra:
+    def test_extra_passthrough_and_bcftools_norm_without_atomize(
+        self, tmp_path, config_dict, samples_df
+    ):
+        from pathlib import Path
+        import subprocess
+        import yaml
+
+        cfg = dict(config_dict)
+        cfg["params"] = {
+            **config_dict["params"],
+            "filter_mutect_calls": {"extra": "--min-median-mapping-quality 25"},
+        }
+        ns = {"config": cfg, "samples_df": samples_df}
+        root = Path(__file__).parent.parent
+        exec((root / "workflow/rules/common.smk").read_text(), ns)
+        assert ns["FILTER_MUTECT_CALLS_EXTRA"] == "--min-median-mapping-quality 25"
+
+        gatk_env = yaml.safe_load((root / "workflow/envs/gatk.yaml").read_text())
+        assert "bcftools=1.21" in gatk_env["dependencies"]
+        assert "htslib=1.21" in gatk_env["dependencies"]
+
+        bin_dir = tmp_path / "bin"
+        bin_dir.mkdir()
+        gatk_args_file = tmp_path / "gatk_args.txt"
+        bcftools_args_file = tmp_path / "bcftools_args.txt"
+
+        gatk_bin = bin_dir / "gatk"
+        gatk_bin.write_text(f'#!/usr/bin/env bash\nprintf "%s\\n" "$@" > "{gatk_args_file}"\n')
+        gatk_bin.chmod(0o755)
+
+        bcftools_bin = bin_dir / "bcftools"
+        bcftools_bin.write_text(
+            f'#!/usr/bin/env bash\nprintf "%s\\n" "$@" > "{bcftools_args_file}"\n'
+        )
+        bcftools_bin.chmod(0o755)
+
+        out_vcf = str(tmp_path / "S1.filtered.vcf.gz")
+        shell_tpl = _extract_rule_shell("workflow/rules/mutect2.smk", "filter_mutect_calls")
+        script = shell_tpl.format(
+            input=_DefaultNamespace(
+                reference="ref.fa",
+                vcf="in.vcf.gz",
+                stats="in.vcf.gz.stats",
+                contamination="S1.contamination.table",
+                segmentation="S1.segments.table",
+                ob_priors="S1_read-orientation-model.tar.gz",
+            ),
+            output=_DefaultNamespace(vcf=out_vcf, tbi=f"{out_vcf}.tbi"),
+            params=_DefaultNamespace(
+                java_opts="-Xmx4g",
+                extra=ns["FILTER_MUTECT_CALLS_EXTRA"],
+                contam_args="--contamination-table S1.contamination.table --tumor-segmentation S1.segments.table",
+            ),
+            log=str(tmp_path / "filter.log"),
+        )
+        env = {**os.environ, "PATH": f"{bin_dir}:{os.environ['PATH']}"}
+        res = subprocess.run(
+            ["bash", "-euo", "pipefail", "-c", script],
+            env=env,
+            capture_output=True,
+            text=True,
+        )
+        assert res.returncode == 0
+        gatk_args = gatk_args_file.read_text().splitlines()
+        assert "--min-median-mapping-quality" in gatk_args
+        assert "25" in gatk_args
+
+        bcftools_args = bcftools_args_file.read_text().splitlines()
+        assert bcftools_args[0] == "norm"
+        assert "-m-any" in bcftools_args
+        assert "-W=tbi" in bcftools_args
+        assert out_vcf in bcftools_args
+        assert "-a" not in bcftools_args
+        assert "--atomize" not in bcftools_args
+
+

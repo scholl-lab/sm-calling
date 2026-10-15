@@ -113,6 +113,12 @@ properties:
           extra:
             type: string
             default: ""
+      filter_mutect_calls:
+        type: object
+        properties:
+          extra:
+            type: string
+            default: ""
       freebayes:
         type: object
       bcftools_norm:

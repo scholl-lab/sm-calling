@@ -52,6 +52,9 @@ MUTECT2_ALL_ARGS = _build_mutect2_extra_args_impl(
     annotation_groups=_m2_params.get("annotation_groups", []),
     extra=_m2_params.get("extra", ""),
 )
+FILTER_MUTECT_CALLS_EXTRA = (
+    config.get("params", {}).get("filter_mutect_calls", {}).get("extra", "")
+)
 FREEBAYES_EXTRA = config.get("params", {}).get("freebayes", {}).get("extra", "")
 BCFTOOLS_NORM_EXTRA = config.get("params", {}).get("bcftools_norm", {}).get("extra", "")
 BCFTOOLS_STATS_EXTRA = config.get("params", {}).get("bcftools_stats", {}).get("extra", "")
