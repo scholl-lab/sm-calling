@@ -37,7 +37,7 @@ rule mutect2_call:
     retries: 2
     resources:
         mem_mb=lambda wildcards, attempt: 17600 * attempt,
-        runtime=lambda wildcards, attempt: 4320 * attempt,
+        runtime=lambda wildcards, attempt: 1440 * attempt,
     conda:
         "../envs/gatk.yaml"
     log:
@@ -75,6 +75,7 @@ rule mutect2_call:
             --germline-resource {input.gnomad} \
             --panel-of-normals {input.pon} \
             --f1r2-tar-gz {output.f1r2} \
+            --native-pair-hmm-threads {threads} \
             {params.extra} \
             {params.interval_arg} \
             -O {output.vcf} \

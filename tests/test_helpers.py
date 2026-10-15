@@ -447,3 +447,41 @@ class TestScatterIntervalsAndTargetBed:
         freebayes_text = (Path(__file__).parent.parent / "workflow/rules/freebayes.smk").read_text()
         assert "intervals=get_freebayes_interval_input" in freebayes_text
 
+
+class TestProfilesAndResources:
+    def test_bih_and_default_profiles_no_mem_conflict_or_static_override(self):
+        from pathlib import Path
+        import yaml
+
+        root = Path(__file__).parent.parent
+        bih = yaml.safe_load((root / "profiles/bih/config.v8+.yaml").read_text())
+        charite = yaml.safe_load((root / "profiles/charite/config.v8+.yaml").read_text())
+        default = yaml.safe_load((root / "profiles/default/config.v8+.yaml").read_text())
+
+        assert bih["default-resources"]["slurm_account"] == "hpc-ag-scholl"
+        assert "mem_mb_per_cpu" not in bih["default-resources"]
+        assert "mem_mb_per_cpu" not in charite["default-resources"]
+        assert default["default-resources"]["mem_mb"] == 4000
+        assert "set-resources" not in default
+
+    def test_rule_runtimes_within_7day_partition_limit_and_hmm_threads(self, tmp_path):
+        import re
+        from pathlib import Path
+
+        root = Path(__file__).parent.parent
+        for smk in ["workflow/rules/mutect2.smk", "workflow/rules/freebayes.smk", "workflow/rules/purecn.smk"]:
+            text = (root / smk).read_text()
+            for m in re.finditer(r"retries:\s*(\d+).*?runtime=lambda wildcards, attempt:\s*(\d+)\s*\*\s*attempt", text, re.S):
+                retries = int(m.group(1))
+                base_runtime = int(m.group(2))
+                assert base_runtime * (retries + 1) <= 10080
+
+        res, gatk_args = TestMutect2CallSmResolution._run_mutect2_shell(
+            tmp_path,
+            tumor_headers={"APA1_T.bam": "@RG\tID:1\tSM:T1\n"},
+        )
+        assert res.returncode == 0
+        idx = gatk_args.index("--native-pair-hmm-threads")
+        assert gatk_args[idx + 1] == "4"
+
+

@@ -27,7 +27,7 @@ rule freebayes_call:
     retries: 3
     resources:
         mem_mb=lambda wildcards, attempt: 16384 * (2 ** (attempt - 1)),
-        runtime=lambda wildcards, attempt: 4320 * attempt,
+        runtime=lambda wildcards, attempt: 1440 * attempt,
     conda:
         "../envs/freebayes.yaml"
     log:
