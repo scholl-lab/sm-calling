@@ -100,14 +100,42 @@ def validate_samples_df(samples_df: pd.DataFrame) -> None:
             )
 
 
+def get_bed_chromosomes(target_bed: str) -> set[str]:
+    """Return the set of chromosomes with at least one interval in a BED file."""
+    chroms: set[str] = set()
+    with open(target_bed, encoding="utf-8") as fh:
+        for raw_line in fh:
+            line = raw_line.strip()
+            if (
+                not line
+                or line.startswith("#")
+                or line.startswith(("track ", "track\t", "browser ", "browser\t"))
+                or line in ("track", "browser")
+            ):
+                continue
+            fields = line.split()
+            if len(fields) >= 3:
+                try:
+                    if int(fields[2]) > int(fields[1]):
+                        chroms.add(fields[0])
+                except ValueError:
+                    continue
+    return chroms
+
+
 def get_scatter_units(
     mode: str,
     chromosomes: list[str] | None = None,
     scatter_count: int = 400,
+    target_bed: str = "",
 ) -> list[str]:
     """Return the list of scatter units based on mode."""
     if mode == "chromosome":
-        return chromosomes or []
+        chroms = list(chromosomes or [])
+        if target_bed:
+            bed_chroms = get_bed_chromosomes(target_bed)
+            return [c for c in chroms if c in bed_chroms]
+        return chroms
     elif mode == "interval":
         return [f"{i:04d}-scattered" for i in range(scatter_count)]
     else:
@@ -135,6 +163,20 @@ def build_interval_arg(
     elif target_bed:
         return f"-L {target_bed}"
     return ""
+
+
+def build_pon_interval_arg(
+    mode: str,
+    chromosomes: list[str] | None = None,
+    intervals_dir: str = "",
+    target_bed: str = "",
+) -> str:
+    """Build GATK -L interval argument(s) for cohort PoN GenomicsDBImport."""
+    if target_bed:
+        return f"-L {target_bed}"
+    if mode == "chromosome" and chromosomes:
+        return " ".join(f"-L {c}" for c in chromosomes)
+    return f"-L {intervals_dir}/scattered.interval_list"
 
 
 def build_mutect2_extra_args(

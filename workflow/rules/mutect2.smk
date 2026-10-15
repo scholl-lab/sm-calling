@@ -54,7 +54,7 @@ rule pon_genomicsdb:
             os.path.join(MUTECT2_PON_DIR, f"{bn}.pon.vcf.gz") for bn in get_normal_bams()
         ],
         reference=REF,
-        target_bed=[TARGET_BED] if TARGET_BED else [],
+        intervals=get_pon_interval_input,
     output:
         db=temp(directory(os.path.join(MUTECT2_PON_DIR, "pon_db"))),
     params:
@@ -62,9 +62,7 @@ rule pon_genomicsdb:
         vcf_args=lambda wc: " ".join(
             f"-V {MUTECT2_PON_DIR}/{bn}.pon.vcf.gz" for bn in get_normal_bams()
         ),
-        interval_arg=(
-            f"-L {TARGET_BED}" if TARGET_BED else " ".join(f"-L {c}" for c in CHROMOSOMES)
-        ),
+        interval_arg=get_pon_interval_arg,
     retries: 2
     resources:
         mem_mb=lambda wildcards, attempt: 17600 * attempt,
@@ -459,12 +457,93 @@ rule filter_mutect_calls:
             -O "$tmp_vcf" \
             2> {log}
 
-        bcftools norm \
+        bcftools view "$tmp_vcf" 2>> {log} \
+        | awk -F'\t' -v OFS='\t' '
+            /^#/ {{ print; next }}
+            {{
+                n = split($8, info, ";")
+                as_idx = 0
+                delete as_set
+                for (i = 1; i <= n; i++) {{
+                    if (info[i] ~ /^AS_FilterStatus=/) {{
+                        val = substr(info[i], 17)
+                        n_alt = split($5, alt_arr, ",")
+                        m = split(val, alleles, "|")
+                        if (val != "" && val != "." && m == n_alt) {{
+                            as_idx = i
+                            for (j = 1; j <= m; j++) {{
+                                k = split(alleles[j], flts, ",")
+                                for (f = 1; f <= k; f++) {{
+                                    if (flts[f] != "" && flts[f] != "SITE" && flts[f] != ".") {{
+                                        as_set[flts[f]] = 1
+                                    }}
+                                }}
+                                gsub(/,/, "+", alleles[j])
+                            }}
+                            new_val = alleles[1]
+                            for (j = 2; j <= m; j++) new_val = new_val "," alleles[j]
+                            info[i] = "AS_FilterStatus=" new_val
+                        }}
+                    }}
+                }}
+                if (as_idx > 0) {{
+                    nf = split($7, cur_flts, ";")
+                    site_flt = ""
+                    for (i = 1; i <= nf; i++) {{
+                        cf = cur_flts[i]
+                        if (cf != "" && cf != "PASS" && cf != "." && cf != "FAIL" && !(cf in as_set)) {{
+                            site_flt = (site_flt == "" ? cf : site_flt ";" cf)
+                        }}
+                    }}
+                    $7 = (site_flt == "" ? "PASS" : site_flt)
+                    $8 = info[1]
+                    for (i = 2; i <= n; i++) $8 = $8 ";" info[i]
+                }}
+                print
+            }}' \
+        | bcftools norm \
             -m-any \
             -f {input.reference} \
+            -Ov \
+            - \
+            2>> {log} \
+        | awk -F'\t' -v OFS='\t' '
+            /^#/ {{ print; next }}
+            {{
+                n = split($8, info, ";")
+                as_val = ""
+                for (i = 1; i <= n; i++) {{
+                    if (info[i] ~ /^AS_FilterStatus=/) {{
+                        as_val = substr(info[i], 17)
+                        gsub(/\+/, ",", as_val)
+                        info[i] = "AS_FilterStatus=" as_val
+                    }}
+                }}
+                if (as_val != "" && as_val != "SITE" && as_val != ".") {{
+                    nf = split($7, cur_flts, ";")
+                    delete seen
+                    flt_str = ($7 == "PASS" || $7 == ".") ? "" : $7
+                    for (i = 1; i <= nf; i++) {{
+                        if (cur_flts[i] != "PASS" && cur_flts[i] != ".") seen[cur_flts[i]] = 1
+                    }}
+                    na = split(as_val, aflts, ",")
+                    for (i = 1; i <= na; i++) {{
+                        af = aflts[i]
+                        if (af != "" && af != "SITE" && af != "." && !(af in seen)) {{
+                            seen[af] = 1
+                            flt_str = (flt_str == "" ? af : flt_str ";" af)
+                        }}
+                    }}
+                    $7 = (flt_str == "" ? "PASS" : flt_str)
+                }}
+                $8 = info[1]
+                for (i = 2; i <= n; i++) $8 = $8 ";" info[i]
+                print
+            }}' \
+        | bcftools view \
             -Oz \
             -W=tbi \
             -o {output.vcf} \
-            "$tmp_vcf" \
+            - \
             2>> {log}
         """

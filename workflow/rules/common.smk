@@ -7,6 +7,7 @@ import pandas as pd
 from rules.helpers import (
     build_interval_arg as _build_interval_arg_impl,
     build_mutect2_extra_args as _build_mutect2_extra_args_impl,
+    build_pon_interval_arg as _build_pon_interval_arg_impl,
     get_java_opts as _get_java_opts_impl,
     get_mutect2_samples as _get_mutect2_samples_impl,
     get_germline_samples as _get_germline_samples_impl,
@@ -77,7 +78,7 @@ QC_DIR = os.path.join(OUTPUT_DIR, "qc")
 
 
 # -- Scatter units -----------------------------------------------------------
-SCATTER_UNITS = _get_scatter_units_impl(SCATTER_MODE, CHROMOSOMES, SCATTER_COUNT)
+SCATTER_UNITS = _get_scatter_units_impl(SCATTER_MODE, CHROMOSOMES, SCATTER_COUNT, TARGET_BED)
 
 
 # -- Sample accessors (wrappers around helpers.py) ---------------------------
@@ -185,6 +186,20 @@ def get_interval_arg(wildcards):
     return _build_interval_arg_impl(
         SCATTER_MODE, wildcards.scatter_unit, INTERVALS_DIR, TARGET_BED
     )
+
+
+def get_pon_interval_input(wildcards=None):
+    """Return interval file input list for PoN GenomicsDBImport."""
+    if TARGET_BED:
+        return [TARGET_BED]
+    if SCATTER_MODE == "chromosome" and SCATTER_UNITS:
+        return []
+    return [os.path.join(INTERVALS_DIR, "scattered.interval_list")]
+
+
+def get_pon_interval_arg(wildcards=None):
+    """Return -L argument(s) for PoN GenomicsDBImport."""
+    return _build_pon_interval_arg_impl(SCATTER_MODE, SCATTER_UNITS, INTERVALS_DIR, TARGET_BED)
 
 
 def get_freebayes_region_arg(wildcards):

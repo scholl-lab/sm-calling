@@ -3,6 +3,8 @@
 import os
 import sys
 
+import pytest
+
 # Add workflow and workflow/rules to the path so helpers.py and rules.helpers can be imported
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "workflow"))
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "workflow", "rules"))
@@ -11,6 +13,7 @@ from helpers import (
     build_freebayes_params,
     build_interval_arg,
     build_mutect2_extra_args,
+    build_pon_interval_arg,
     get_germline_samples,
     get_java_opts,
     get_mutect2_samples,
@@ -118,6 +121,18 @@ class TestGetScatterUnits:
     def test_chromosome_mode_empty(self):
         result = get_scatter_units("chromosome", None)
         assert result == []
+
+    def test_chromosome_mode_filters_by_target_bed_preserving_order(self):
+        from unittest.mock import mock_open, patch
+
+        bed_content = "# header\nchr1\t100\t200\nchr2\t300\t400\n"
+        with patch("builtins.open", mock_open(read_data=bed_content)):
+            result = get_scatter_units(
+                "chromosome",
+                ["chr2", "chr1", "chrM"],
+                target_bed="exome.bed",
+            )
+        assert result == ["chr2", "chr1"]
 
 
 class TestBuildMutect2ExtraArgs:
@@ -455,11 +470,12 @@ class TestScatterIntervalsAndTargetBed:
         cfg_chr = dict(config_dict)
         cfg_chr["scatter"] = {
             "mode": "chromosome",
-            "chromosomes": ["chr1", "chr2"],
+            "chromosomes": ["chr1", "chr2", "chrM"],
             "target_bed": str(target_bed_path),
         }
         ns_chr = {"config": cfg_chr, "samples_df": samples_df}
         exec(common_code, ns_chr)
+        assert ns_chr["SCATTER_UNITS"] == ["chr1", "chr2"]
         wc_chr = _DefaultNamespace(scatter_unit="chr1")
         assert ns_chr["get_freebayes_interval_input"](wc_chr) == [str(target_bed_path)]
         region_arg = ns_chr["get_freebayes_region_arg"](wc_chr)
@@ -546,6 +562,7 @@ class TestFilterMutectCallsNormAndExtra:
     def test_extra_passthrough_and_bcftools_norm_without_atomize(
         self, tmp_path, config_dict, samples_df
     ):
+        import shutil
         import subprocess
         from pathlib import Path
 
@@ -565,18 +582,67 @@ class TestFilterMutectCallsNormAndExtra:
         assert "bcftools=1.21" in gatk_env["dependencies"]
         assert "htslib=1.21" in gatk_env["dependencies"]
 
+        real_bcftools = shutil.which("bcftools")
+        if not real_bcftools:
+            for candidate in (
+                "/home/bernt-popp/miniforge3/envs/vntyper/bin/bcftools",
+                "/home/bernt-popp/miniforge3/envs/varlens-tools/bin/bcftools",
+            ):
+                if Path(candidate).exists():
+                    real_bcftools = candidate
+                    break
+        if not real_bcftools:
+            pytest.skip("bcftools binary not available")
+
+        ref_fa = tmp_path / "ref.fa"
+        ref_fa.write_text(">chr1\nACGTACGTACGT\n")
+
+        raw_vcf_content = (
+            "##fileformat=VCFv4.2\n"
+            '##FILTER=<ID=PASS,Description="All filters passed">\n'
+            '##FILTER=<ID=FAIL,Description="Fail">\n'
+            '##FILTER=<ID=weak_evidence,Description="Weak evidence">\n'
+            '##FILTER=<ID=strand_bias,Description="Strand bias">\n'
+            '##FILTER=<ID=clustered_events,Description="Clustered events">\n'
+            '##INFO=<ID=AS_FilterStatus,Number=A,Type=String,Description="Filter status">\n'
+            '##INFO=<ID=TLOD,Number=A,Type=Float,Description="Tumor LOD">\n'
+            '##FORMAT=<ID=GT,Number=1,Type=String,Description="Genotype">\n'
+            '##FORMAT=<ID=AD,Number=R,Type=Integer,Description="Allelic depths">\n'
+            "##contig=<ID=chr1,length=12>\n"
+            "#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\tTUMOR\n"
+            "chr1\t2\t.\tC\tG,T\t.\tPASS\tAS_FilterStatus=SITE|weak_evidence;TLOD=12.3,1.1\tGT:AD\t0/1/2:10,8,1\n"
+            "chr1\t5\t.\tA\tC,G\t.\tclustered_events\tAS_FilterStatus=SITE|weak_evidence,strand_bias;TLOD=9.0,0.8\tGT:AD\t0/1/2:10,7,1\n"
+            "chr1\t8\t.\tT\tA,C\t.\tFAIL\tAS_FilterStatus=weak_evidence|strand_bias;TLOD=1.2,1.5\tGT:AD\t0/1/2:10,1,1\n"
+        )
+        seed_vcf = tmp_path / "seed.vcf.gz"
+        subprocess.run(
+            [real_bcftools, "view", "-Oz", "-o", str(seed_vcf)],
+            input=raw_vcf_content,
+            text=True,
+            check=True,
+        )
+
         bin_dir = tmp_path / "bin"
         bin_dir.mkdir()
         gatk_args_file = tmp_path / "gatk_args.txt"
         bcftools_args_file = tmp_path / "bcftools_args.txt"
 
         gatk_bin = bin_dir / "gatk"
-        gatk_bin.write_text(f'#!/usr/bin/env bash\nprintf "%s\\n" "$@" > "{gatk_args_file}"\n')
+        gatk_bin.write_text(
+            "#!/usr/bin/env bash\n"
+            f'printf "%s\\n" "$@" > "{gatk_args_file}"\n'
+            "while [ $# -gt 0 ]; do\n"
+            '  if [ "$1" = "-O" ]; then cp "' + str(seed_vcf) + '" "$2"; break; fi\n'
+            "  shift\n"
+            "done\n"
+        )
         gatk_bin.chmod(0o755)
 
         bcftools_bin = bin_dir / "bcftools"
         bcftools_bin.write_text(
-            f'#!/usr/bin/env bash\nprintf "%s\\n" "$@" > "{bcftools_args_file}"\n'
+            "#!/usr/bin/env bash\n"
+            f'printf "%s\\n" "$@" >> "{bcftools_args_file}"\n'
+            f'exec "{real_bcftools}" "$@"\n'
         )
         bcftools_bin.chmod(0o755)
 
@@ -584,7 +650,7 @@ class TestFilterMutectCallsNormAndExtra:
         shell_tpl = _extract_rule_shell("workflow/rules/mutect2.smk", "filter_mutect_calls")
         script = shell_tpl.format(
             input=_DefaultNamespace(
-                reference="ref.fa",
+                reference=str(ref_fa),
                 vcf="in.vcf.gz",
                 stats="in.vcf.gz.stats",
                 contamination="S1.contamination.table",
@@ -609,18 +675,137 @@ class TestFilterMutectCallsNormAndExtra:
             capture_output=True,
             text=True,
         )
-        assert res.returncode == 0
+        assert res.returncode == 0, (tmp_path / "filter.log").read_text()
         gatk_args = gatk_args_file.read_text().splitlines()
         assert "--min-median-mapping-quality" in gatk_args
         assert "25" in gatk_args
 
         bcftools_args = bcftools_args_file.read_text().splitlines()
-        assert bcftools_args[0] == "norm"
+        assert "norm" in bcftools_args
         assert "-m-any" in bcftools_args
         assert "-W=tbi" in bcftools_args
         assert out_vcf in bcftools_args
         assert "-a" not in bcftools_args
         assert "--atomize" not in bcftools_args
+        assert Path(f"{out_vcf}.tbi").exists()
+
+        records = [
+            line.split("\t")
+            for line in subprocess.run(
+                [real_bcftools, "view", "-H", out_vcf],
+                capture_output=True,
+                text=True,
+                check=True,
+            ).stdout.splitlines()
+        ]
+        assert len(records) == 6
+        # chr1:2 C>G (SITE -> PASS) and C>T (weak_evidence -> weak_evidence)
+        assert (records[0][1], records[0][4], records[0][6]) == ("2", "G", "PASS")
+        assert "AS_FilterStatus=SITE;" in records[0][7]
+        assert (records[1][1], records[1][4], records[1][6]) == ("2", "T", "weak_evidence")
+        assert "AS_FilterStatus=weak_evidence;" in records[1][7]
+        # chr1:5 A>C (clustered_events + SITE) and A>G (clustered_events + weak_evidence,strand_bias)
+        assert (records[2][1], records[2][4], records[2][6]) == ("5", "C", "clustered_events")
+        assert "AS_FilterStatus=SITE;" in records[2][7]
+        assert (records[3][1], records[3][4], records[3][6]) == (
+            "5",
+            "G",
+            "clustered_events;weak_evidence;strand_bias",
+        )
+        assert "AS_FilterStatus=weak_evidence,strand_bias;" in records[3][7]
+        # chr1:8 T>A (FAIL + weak_evidence -> weak_evidence) and T>C (FAIL + strand_bias -> strand_bias)
+        assert (records[4][1], records[4][4], records[4][6]) == ("8", "A", "weak_evidence")
+        assert "AS_FilterStatus=weak_evidence;" in records[4][7]
+        assert (records[5][1], records[5][4], records[5][6]) == ("8", "C", "strand_bias")
+        assert "AS_FilterStatus=strand_bias;" in records[5][7]
+
+    def test_multiallelic_as_filter_status_split_preserves_allele_and_site_filters(self):
+        import re
+        import shutil
+        import subprocess
+        from pathlib import Path
+
+        real_bcftools = shutil.which("bcftools")
+        if not real_bcftools:
+            for candidate in (
+                "/home/bernt-popp/miniforge3/envs/vntyper/bin/bcftools",
+                "/home/bernt-popp/miniforge3/envs/varlens-tools/bin/bcftools",
+            ):
+                if Path(candidate).exists():
+                    real_bcftools = candidate
+                    break
+        if not real_bcftools:
+            pytest.skip("bcftools binary not available")
+
+        shell_tpl = _extract_rule_shell("workflow/rules/mutect2.smk", "filter_mutect_calls")
+        awk_blocks = re.findall(r"awk -F'\\t' -v OFS='\\t' '(.*?)'", shell_tpl, re.S)
+        assert len(awk_blocks) == 2
+        pre_awk = awk_blocks[0].replace("{{", "{").replace("}}", "}")
+        post_awk = awk_blocks[1].replace("{{", "{").replace("}}", "}")
+
+        raw_vcf_content = (
+            "##fileformat=VCFv4.2\n"
+            '##FILTER=<ID=PASS,Description="All filters passed">\n'
+            '##FILTER=<ID=FAIL,Description="Fail">\n'
+            '##FILTER=<ID=weak_evidence,Description="Weak evidence">\n'
+            '##FILTER=<ID=strand_bias,Description="Strand bias">\n'
+            '##FILTER=<ID=clustered_events,Description="Clustered events">\n'
+            '##INFO=<ID=AS_FilterStatus,Number=A,Type=String,Description="Filter status">\n'
+            '##INFO=<ID=TLOD,Number=A,Type=Float,Description="Tumor LOD">\n'
+            '##FORMAT=<ID=GT,Number=1,Type=String,Description="Genotype">\n'
+            '##FORMAT=<ID=AD,Number=R,Type=Integer,Description="Allelic depths">\n'
+            "##contig=<ID=chr1,length=12>\n"
+            "#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\tTUMOR\n"
+            "chr1\t2\t.\tA\tC,G\t.\tPASS\tAS_FilterStatus=SITE|weak_evidence;TLOD=12.3,1.1\tGT:AD\t0/1/2:10,8,1\n"
+            "chr1\t5\t.\tA\tC,G\t.\tclustered_events\tAS_FilterStatus=SITE|weak_evidence,strand_bias;TLOD=9.0,0.8\tGT:AD\t0/1/2:10,7,1\n"
+            "chr1\t8\t.\tT\tA,C\t.\tFAIL\tAS_FilterStatus=weak_evidence|strand_bias;TLOD=1.2,1.5\tGT:AD\t0/1/2:10,1,1\n"
+        )
+        cmd = (
+            f"awk -F'\\t' -v OFS='\\t' '{pre_awk}' "
+            f'| "{real_bcftools}" norm -m-any -Ov - '
+            f"| awk -F'\\t' -v OFS='\\t' '{post_awk}'"
+        )
+        res = subprocess.run(
+            ["bash", "-euo", "pipefail", "-c", cmd],
+            input=raw_vcf_content,
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        records = [
+            line.split("\t") for line in res.stdout.splitlines() if not line.startswith("#")
+        ]
+        assert len(records) == 6
+        assert (records[0][4], records[0][6], records[0][7]) == (
+            "C",
+            "PASS",
+            "AS_FilterStatus=SITE;TLOD=12.3",
+        )
+        assert (records[1][4], records[1][6], records[1][7]) == (
+            "G",
+            "weak_evidence",
+            "AS_FilterStatus=weak_evidence;TLOD=1.1",
+        )
+        assert (records[2][4], records[2][6], records[2][7]) == (
+            "C",
+            "clustered_events",
+            "AS_FilterStatus=SITE;TLOD=9",
+        )
+        assert (records[3][4], records[3][6], records[3][7]) == (
+            "G",
+            "clustered_events;weak_evidence;strand_bias",
+            "AS_FilterStatus=weak_evidence,strand_bias;TLOD=0.8",
+        )
+        assert (records[4][4], records[4][6], records[4][7]) == (
+            "A",
+            "weak_evidence",
+            "AS_FilterStatus=weak_evidence;TLOD=1.2",
+        )
+        assert (records[5][4], records[5][6], records[5][7]) == (
+            "C",
+            "strand_bias",
+            "AS_FilterStatus=strand_bias;TLOD=1.5",
+        )
 
 
 class TestCohortPonAndHotspotMasking:
@@ -714,6 +899,43 @@ class TestCohortPonAndHotspotMasking:
         assert res.returncode == 0
         args = bcftools_args_file.read_text().splitlines()
         assert args[:5] == ["view", "-T", "^hotspots_pad15.bed", "-Oz", "-W=tbi"]
+
+    def test_pon_intervals_without_chromosome_scattering_or_targets(self, config_dict, samples_df):
+        from pathlib import Path
+
+        assert (
+            build_pon_interval_arg("none", [], "/output/intervals", "")
+            == "-L /output/intervals/scattered.interval_list"
+        )
+        assert (
+            build_pon_interval_arg("interval", ["chr1"], "/output/intervals", "")
+            == "-L /output/intervals/scattered.interval_list"
+        )
+        assert (
+            build_pon_interval_arg("chromosome", ["chr1", "chr2"], "/output/intervals", "")
+            == "-L chr1 -L chr2"
+        )
+        assert (
+            build_pon_interval_arg("none", [], "/output/intervals", "targets.bed")
+            == "-L targets.bed"
+        )
+
+        root = Path(__file__).parent.parent
+        cfg = dict(config_dict)
+        cfg["gatk_resources"] = {
+            **config_dict["gatk_resources"],
+            "panel_of_normals": "",
+            "pon_mask_bed": "",
+        }
+        cfg["scatter"] = {
+            "mode": "none",
+            "chromosomes": [],
+            "target_bed": "",
+        }
+        ns = {"config": cfg, "samples_df": samples_df}
+        exec((root / "workflow/rules/common.smk").read_text(), ns)
+        assert ns["get_pon_interval_input"]() == ["/output/intervals/scattered.interval_list"]
+        assert ns["get_pon_interval_arg"]() == "-L /output/intervals/scattered.interval_list"
 
 
 class TestMultiRegionTumorBams:
@@ -817,13 +1039,13 @@ class TestMultiRegionTumorBams:
         assert f_args.count("--tumor-segmentation") == 2
 
 
+@pytest.mark.dryrun
 class TestSnakemakeDryRun:
     def test_snakemake_dryrun_interval_pon_and_underscored_multiregion(self, tmp_path):
         import shutil
         import subprocess
         from pathlib import Path
 
-        import pytest
         import yaml
 
         snakemake_bin = shutil.which("snakemake") or "/tmp/sm-venv/bin/snakemake"
@@ -933,3 +1155,66 @@ class TestSnakemakeDryRun:
         assert "--matched " in out
         assert "APA_1_N.getpileupsummaries.table" in out
         assert "APA_2_N.getpileupsummaries.table" in out
+
+        # Verify PoN in mode=none with chromosomes=[], target_bed="", panel_of_normals=""
+        cfg_none = {
+            **cfg,
+            "scatter": {
+                "mode": "none",
+                "chromosomes": [],
+                "target_bed": "",
+            },
+        }
+        cfg_none_file = tmp_path / "config_none.yaml"
+        cfg_none_file.write_text(yaml.safe_dump(cfg_none))
+        res_none = subprocess.run(
+            [
+                snakemake_bin,
+                "-s",
+                str(root / "workflow/Snakefile"),
+                "--configfile",
+                str(cfg_none_file),
+                "--executor",
+                "dryrun",
+                "-n",
+                "-p",
+            ],
+            cwd=str(tmp_path),
+            capture_output=True,
+            text=True,
+        )
+        assert res_none.returncode == 0, res_none.stderr + "\n" + res_none.stdout
+        assert "rule scatter_intervals_by_ns:" in res_none.stdout
+        assert "scattered.interval_list" in res_none.stdout
+
+        # Verify chromosome mode with target_bed omits configured chromosomes absent from BED
+        cfg_chr = {
+            **cfg,
+            "scatter": {
+                "mode": "chromosome",
+                "chromosomes": ["chr1", "chrM"],
+                "target_bed": str(target_bed),
+            },
+        }
+        cfg_chr_file = tmp_path / "config_chr.yaml"
+        cfg_chr_file.write_text(yaml.safe_dump(cfg_chr))
+        res_chr = subprocess.run(
+            [
+                snakemake_bin,
+                "-s",
+                str(root / "workflow/Snakefile"),
+                "--configfile",
+                str(cfg_chr_file),
+                "--executor",
+                "dryrun",
+                "-n",
+                "-p",
+            ],
+            cwd=str(tmp_path),
+            capture_output=True,
+            text=True,
+        )
+        assert res_chr.returncode == 0, res_chr.stderr + "\n" + res_chr.stdout
+        assert "APA_1_chr1.vcf.gz" in res_chr.stdout
+        assert "freebayes_chr1.vcf.gz" in res_chr.stdout
+        assert "chrM" not in res_chr.stdout
