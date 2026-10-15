@@ -19,6 +19,7 @@ rule mutect2_call:
         reference=REF,
         pon=PON,
         gnomad=AF_GNOMAD,
+        intervals=get_interval_input,
     output:
         vcf=temp(
             ensure(
@@ -198,14 +199,18 @@ rule get_pileup_summaries:
         bam=lambda wc: os.path.join(BAM_FOLDER, wc.bam_basename + BAM_EXT),
         reference=REF,
         gnomad=COMMON_GNOMAD,
+        target_bed=[TARGET_BED] if TARGET_BED else [],
     output:
         table=os.path.join(MUTECT2_CONTAM_DIR, "{bam_basename}.getpileupsummaries.table"),
     params:
         java_opts=get_java_opts,
+        interval_arg=(
+            f"-L {TARGET_BED} --interval-set-rule INTERSECTION" if TARGET_BED else ""
+        ),
     retries: 2
     resources:
         mem_mb=lambda wildcards, attempt: 17600 * attempt,
-        runtime=lambda wildcards, attempt: 4320 * attempt,
+        runtime=lambda wildcards, attempt: 360 * attempt,
     conda:
         "../envs/gatk.yaml"
     log:
@@ -219,6 +224,7 @@ rule get_pileup_summaries:
             -R {input.reference} \
             -V {input.gnomad} \
             -L {input.gnomad} \
+            {params.interval_arg} \
             -O {output.table} \
             2> {log}
         """

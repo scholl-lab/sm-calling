@@ -31,6 +31,7 @@ bam:
 scatter:
   mode: "chromosome"  # "chromosome" | "interval" | "none"
   count: 400           # Number of intervals (for interval mode)
+  target_bed: ""       # Optional capture target BED file
   chromosomes:
     - "chr1"
     - "chr2"

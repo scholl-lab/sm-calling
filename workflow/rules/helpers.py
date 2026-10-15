@@ -103,6 +103,29 @@ def get_scatter_units(
         return ["all"]
 
 
+def build_interval_arg(
+    mode: str,
+    unit: str,
+    intervals_dir: str = "",
+    target_bed: str = "",
+) -> str:
+    """Build GATK -L interval arguments with optional target_bed intersection."""
+    if mode == "chromosome":
+        if target_bed:
+            return f"-L {unit} -L {target_bed} --interval-set-rule INTERSECTION"
+        return f"-L {unit}"
+    elif mode == "interval":
+        if target_bed:
+            return (
+                f"-L {intervals_dir}/{unit}.interval_list "
+                f"-L {target_bed} --interval-set-rule INTERSECTION"
+            )
+        return f"-L {intervals_dir}/{unit}.interval_list"
+    elif target_bed:
+        return f"-L {target_bed}"
+    return ""
+
+
 def build_mutect2_extra_args(
     genotype_germline_sites: bool = True,
     genotype_pon_sites: bool = True,

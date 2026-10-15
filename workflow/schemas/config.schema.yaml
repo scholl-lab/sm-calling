@@ -70,6 +70,10 @@ properties:
         type: integer
         minimum: 1
         default: 400
+      target_bed:
+        type: string
+        default: ""
+        description: "Optional capture target BED file for interval restriction."
       chromosomes:
         type: array
         items:

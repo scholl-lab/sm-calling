@@ -5,6 +5,7 @@ import os
 import pandas as pd
 
 from rules.helpers import (
+    build_interval_arg as _build_interval_arg_impl,
     build_mutect2_extra_args as _build_mutect2_extra_args_impl,
     get_java_opts as _get_java_opts_impl,
     get_mutect2_samples as _get_mutect2_samples_impl,
@@ -31,6 +32,7 @@ BAM_EXT = config["bam"]["file_extension"]
 SCATTER_MODE = config["scatter"]["mode"]
 SCATTER_COUNT = config["scatter"].get("count", 400)
 CHROMOSOMES = config["scatter"].get("chromosomes", [])
+TARGET_BED = config["scatter"].get("target_bed", "")
 
 INTERVALS_DIR = config["paths"].get("intervals_dir", os.path.join(OUTPUT_DIR, "intervals"))
 
@@ -135,14 +137,30 @@ def get_normal_input_arg(wildcards):
     return ""
 
 
+def get_interval_input(wildcards):
+    """Return interval file input list for Mutect2 based on scatter mode."""
+    inputs = []
+    if SCATTER_MODE == "interval":
+        inputs.append(os.path.join(INTERVALS_DIR, f"{wildcards.scatter_unit}.interval_list"))
+    if TARGET_BED:
+        inputs.append(TARGET_BED)
+    return inputs
+
+
+def get_freebayes_interval_input(wildcards):
+    """Return BED file input list for FreeBayes based on scatter mode."""
+    if SCATTER_MODE == "interval":
+        return [os.path.join(INTERVALS_DIR, f"{wildcards.scatter_unit}.bed")]
+    if SCATTER_MODE == "none" and TARGET_BED:
+        return [TARGET_BED]
+    return []
+
+
 def get_interval_arg(wildcards):
-    """Return -L argument based on scatter mode and unit."""
-    unit = wildcards.scatter_unit
-    if SCATTER_MODE == "chromosome":
-        return f"-L {unit}"
-    elif SCATTER_MODE == "interval":
-        return f"-L {INTERVALS_DIR}/{unit}.interval_list"
-    return ""
+    """Return -L argument based on scatter mode, unit, and optional target_bed."""
+    return _build_interval_arg_impl(
+        SCATTER_MODE, wildcards.scatter_unit, INTERVALS_DIR, TARGET_BED
+    )
 
 
 def get_freebayes_region_arg(wildcards):
@@ -152,6 +170,8 @@ def get_freebayes_region_arg(wildcards):
         return f"-r {unit}"
     elif SCATTER_MODE == "interval":
         return f"--targets {INTERVALS_DIR}/{unit}.bed"
+    elif TARGET_BED:
+        return f"--targets {TARGET_BED}"
     return ""
 
 

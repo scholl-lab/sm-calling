@@ -3,11 +3,13 @@
 import sys
 import os
 
-# Add workflow/rules to the path so helpers.py can be imported directly
+# Add workflow and workflow/rules to the path so helpers.py and rules.helpers can be imported
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "workflow"))
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "workflow", "rules"))
 
 from helpers import (
     build_freebayes_params,
+    build_interval_arg,
     build_mutect2_extra_args,
     get_germline_samples,
     get_java_opts,
@@ -400,4 +402,48 @@ class TestValidateSamplesDf:
         ).set_index("sample", drop=False)
         with pytest.raises(ValueError, match="tumor_only"):
             validate_samples_df(df)
+
+
+class TestScatterIntervalsAndTargetBed:
+    def test_build_interval_arg_with_target_bed(self):
+        assert (
+            build_interval_arg("chromosome", "chr1", target_bed="targets.bed")
+            == "-L chr1 -L targets.bed --interval-set-rule INTERSECTION"
+        )
+        assert build_interval_arg("chromosome", "chr1") == "-L chr1"
+        assert (
+            build_interval_arg("interval", "0000-scattered", "/iv", "targets.bed")
+            == "-L /iv/0000-scattered.interval_list -L targets.bed --interval-set-rule INTERSECTION"
+        )
+        assert build_interval_arg("none", "all", target_bed="targets.bed") == "-L targets.bed"
+
+    def test_split_intervals_dag_and_bed_conversion(self, config_dict, samples_df):
+        from pathlib import Path
+
+        cfg = dict(config_dict)
+        cfg["scatter"] = {"mode": "interval", "count": 2, "target_bed": "targets.bed"}
+        ns = {"config": cfg, "samples_df": samples_df}
+        common_code = (Path(__file__).parent.parent / "workflow/rules/common.smk").read_text()
+        exec(common_code, ns)
+
+        wc = _DefaultNamespace(scatter_unit="0000-scattered")
+        assert ns["get_interval_input"](wc) == [
+            "/output/intervals/0000-scattered.interval_list",
+            "targets.bed",
+        ]
+        assert ns["get_freebayes_interval_input"](wc) == [
+            "/output/intervals/0000-scattered.bed",
+        ]
+
+        split_shell = _extract_rule_shell("workflow/rules/scatter.smk", "split_intervals")
+        assert 'gatk IntervalListToBed -I "$interval" -O "$bed"' in split_shell
+        assert "sed '" not in split_shell
+
+        mutect2_text = (Path(__file__).parent.parent / "workflow/rules/mutect2.smk").read_text()
+        assert "intervals=get_interval_input" in mutect2_text
+        assert "--interval-set-rule INTERSECTION" in mutect2_text
+        assert "360 * attempt" in mutect2_text
+
+        freebayes_text = (Path(__file__).parent.parent / "workflow/rules/freebayes.smk").read_text()
+        assert "intervals=get_freebayes_interval_input" in freebayes_text
 

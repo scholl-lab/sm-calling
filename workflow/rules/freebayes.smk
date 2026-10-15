@@ -18,6 +18,7 @@ rule freebayes_call:
     input:
         reference=REF,
         bam_files=_get_germline_bam_paths(),
+        intervals=get_freebayes_interval_input,
     output:
         vcf=temp(os.path.join(FREEBAYES_SCATTER_DIR, "freebayes_{scatter_unit}.vcf.gz")),
     params:
