@@ -29,7 +29,6 @@ rule mutect2_call:
         stats=temp(os.path.join(MUTECT2_SCATTER_DIR, "{sample}_{scatter_unit}.vcf.gz.stats")),
         f1r2=temp(os.path.join(MUTECT2_SCATTER_DIR, "{sample}_{scatter_unit}.f1r2.tar.gz")),
     params:
-        normal_arg=get_normal_name,
         normal_input_arg=get_normal_input_arg,
         interval_arg=get_interval_arg,
         java_opts=get_java_opts,
@@ -46,18 +45,39 @@ rule mutect2_call:
         os.path.join(LOG_DIR, "benchmarks/mutect2_call/{sample}_{scatter_unit}.tsv")
     shell:
         r"""
+        extract_sm() {{
+            local sm
+            sm=$(samtools view -H "$1" | awk -F'\t' '/^@RG/ {{s=""; for (i=1; i<=NF; i++) if ($i ~ /^SM:/) s=substr($i, 4); print s}}' | sort -u)
+            if [ -z "$sm" ] || [ "$(printf '%s\n' "$sm" | wc -l)" -ne 1 ]; then
+                echo "ERROR: $1 must contain a single non-empty @RG SM tag" >&2
+                return 1
+            fi
+            printf '%s\n' "$sm"
+        }}
+
+        tumor_sm=$(extract_sm "{input.tumor_bam}") 2> {log}
+        normal_arg=()
+        if [ -n "{input.normal_bam}" ]; then
+            normal_sm=$(extract_sm "{input.normal_bam}") 2>> {log}
+            if [ "$tumor_sm" = "$normal_sm" ]; then
+                echo "ERROR: tumor_sm ($tumor_sm) equals normal_sm ($normal_sm)" >> {log}
+                exit 1
+            fi
+            normal_arg=(-normal "$normal_sm")
+        fi
+
         gatk --java-options '{params.java_opts}' Mutect2 \
             -R {input.reference} \
             -I {input.tumor_bam} \
             {params.normal_input_arg} \
-            {params.normal_arg} \
+            "${{normal_arg[@]}}" \
             --germline-resource {input.gnomad} \
             --panel-of-normals {input.pon} \
             --f1r2-tar-gz {output.f1r2} \
             {params.extra} \
             {params.interval_arg} \
             -O {output.vcf} \
-            2> {log}
+            2>> {log}
         """
 
 

@@ -116,14 +116,6 @@ def get_normal_bam(wildcards):
     return []
 
 
-def get_normal_name(wildcards):
-    """Return '-normal SAMPLE_NAME' arg or empty string."""
-    row = samples_df.loc[wildcards.sample]
-    normal = row.get("normal_bam", "")
-    if normal and normal != "." and pd.notna(normal):
-        return f"-normal {normal}"
-    return ""
-
 
 def get_normal_input_arg(wildcards):
     """Return '-I normal.bam' arg or empty string for GATK Mutect2."""

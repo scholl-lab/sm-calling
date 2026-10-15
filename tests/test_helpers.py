@@ -208,3 +208,115 @@ class TestBuildFreebayesParams:
     def test_empty(self):
         result = build_freebayes_params("")
         assert result == ""
+
+
+class _DefaultNamespace(dict):
+    def __getattr__(self, key):
+        return self.get(key, "")
+
+
+def _extract_rule_shell(smk_relpath: str, rule_name: str) -> str:
+    import re
+    from pathlib import Path
+
+    text = (Path(__file__).parent.parent / smk_relpath).read_text()
+    pattern = rf"rule {rule_name}:.*?shell:\s*r?\"\"\"(.*?)\"\"\""
+    match = re.search(pattern, text, re.S)
+    assert match, f"shell block not found for {rule_name}"
+    return match.group(1)
+
+
+class TestMutect2CallSmResolution:
+    @staticmethod
+    def _run_mutect2_shell(tmp_path, tumor_headers, normal_header=None):
+        import subprocess
+
+        bin_dir = tmp_path / "bin"
+        bin_dir.mkdir(exist_ok=True)
+        gatk_args_file = tmp_path / "gatk_args.txt"
+
+        samtools_bin = bin_dir / "samtools"
+        samtools_bin.write_text('#!/usr/bin/env bash\nshift 2\ncat "$1"\n')
+        samtools_bin.chmod(0o755)
+
+        gatk_bin = bin_dir / "gatk"
+        gatk_bin.write_text(f'#!/usr/bin/env bash\nprintf "%s\\n" "$@" > "{gatk_args_file}"\n')
+        gatk_bin.chmod(0o755)
+
+        if isinstance(tumor_headers, str):
+            tumor_headers = {"tumor_file.bam": tumor_headers}
+        tumor_paths = []
+        for fname, hdr in tumor_headers.items():
+            p = tmp_path / fname
+            p.write_text(hdr)
+            tumor_paths.append(str(p))
+
+        normal_path = ""
+        if normal_header is not None:
+            np = tmp_path / "normal_file.bam"
+            np.write_text(normal_header)
+            normal_path = str(np)
+
+        log_path = tmp_path / "mutect2.log"
+        shell_tpl = _extract_rule_shell("workflow/rules/mutect2.smk", "mutect2_call")
+        script = shell_tpl.format(
+            input=_DefaultNamespace(
+                reference="ref.fa",
+                tumor_bam=" ".join(tumor_paths),
+                normal_bam=normal_path,
+                gnomad="gnomad.vcf.gz",
+                pon="pon.vcf.gz",
+            ),
+            output=_DefaultNamespace(f1r2="f1r2.tar.gz", vcf="out.vcf.gz"),
+            params=_DefaultNamespace(
+                java_opts="-Xmx4g",
+                tumor_input_arg=" ".join(f"-I {p}" for p in tumor_paths),
+                normal_input_arg=f"-I {normal_path}" if normal_path else "",
+                pon_arg="--panel-of-normals pon.vcf.gz",
+                extra="",
+                interval_arg="-L chr1",
+            ),
+            threads=4,
+            log=str(log_path),
+        )
+        env = {**os.environ, "PATH": f"{bin_dir}:{os.environ['PATH']}"}
+        res = subprocess.run(
+            ["bash", "-euo", "pipefail", "-c", script],
+            env=env,
+            capture_output=True,
+            text=True,
+        )
+        gatk_args = gatk_args_file.read_text().splitlines() if gatk_args_file.exists() else []
+        return res, gatk_args
+
+    def test_resolves_normal_sm_when_filename_differs(self, tmp_path):
+        res, gatk_args = self._run_mutect2_shell(
+            tmp_path,
+            tumor_headers={"APA1_T.bam": "@RG\tID:1\tSM:TRUE_TUMOR_SM\n"},
+            normal_header="@RG\tID:2\tSM:TRUE_NORMAL_SM\n",
+        )
+        assert res.returncode == 0
+        idx = gatk_args.index("-normal")
+        assert gatk_args[idx + 1] == "TRUE_NORMAL_SM"
+
+    def test_fails_when_tumor_and_normal_sm_collide(self, tmp_path):
+        res, _ = self._run_mutect2_shell(
+            tmp_path,
+            tumor_headers={"APA1_T.bam": "@RG\tID:1\tSM:SAME_SM\n"},
+            normal_header="@RG\tID:2\tSM:SAME_SM\n",
+        )
+        assert res.returncode != 0
+
+    def test_fails_on_missing_or_multisample_sm(self, tmp_path):
+        res_empty, _ = self._run_mutect2_shell(
+            tmp_path,
+            tumor_headers={"APA1_T.bam": "@RG\tID:1\n"},
+        )
+        assert res_empty.returncode != 0
+
+        res_multi, _ = self._run_mutect2_shell(
+            tmp_path,
+            tumor_headers={"APA1_T.bam": "@RG\tID:1\tSM:S1\n@RG\tID:2\tSM:S2\n"},
+        )
+        assert res_multi.returncode != 0
+
