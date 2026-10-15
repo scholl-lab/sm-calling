@@ -562,3 +562,91 @@ class TestFilterMutectCallsNormAndExtra:
         assert "--atomize" not in bcftools_args
 
 
+class TestCohortPonAndHotspotMasking:
+    def test_in_pon_filtering_and_cohort_pon_dag_with_hotspot_masking(
+        self, tmp_path, config_dict
+    ):
+        from pathlib import Path
+        import subprocess
+        import pandas as pd
+
+        df = pd.DataFrame(
+            {
+                "sample": ["S1", "S2", "S3"],
+                "tumor_bam": ["S1.T", "S2.T", "S3.T"],
+                "normal_bam": ["S1.N", "S2.N", "."],
+                "analysis_type": ["tumor_normal", "tumor_normal", "tumor_only"],
+                "in_pon": ["yes", "no", "no"],
+            }
+        ).set_index("sample", drop=False)
+
+        assert get_normal_bam_basenames(df) == ["S1.N"]
+
+        root = Path(__file__).parent.parent
+        cfg = dict(config_dict)
+        cfg["gatk_resources"] = {
+            **config_dict["gatk_resources"],
+            "panel_of_normals": "",
+            "pon_mask_bed": "hotspots_pad15.bed",
+        }
+        ns = {"config": cfg, "samples_df": df}
+        exec((root / "workflow/rules/common.smk").read_text(), ns)
+
+        assert ns["get_pon"]() == "/output/mutect2/pon/pon.masked.vcf.gz"
+        assert ns["get_normal_bams"]() == ["S1.N"]
+
+        cfg_unmasked = dict(config_dict)
+        cfg_unmasked["gatk_resources"] = {
+            **config_dict["gatk_resources"],
+            "panel_of_normals": "",
+            "pon_mask_bed": "",
+        }
+        ns_unmasked = {"config": cfg_unmasked, "samples_df": df}
+        exec((root / "workflow/rules/common.smk").read_text(), ns_unmasked)
+        assert ns_unmasked["get_pon"]() == "/output/mutect2/pon/pon.vcf.gz"
+
+        pon_m2_shell = _extract_rule_shell("workflow/rules/mutect2.smk", "pon_mutect2")
+        assert "--max-mnp-distance 0" in pon_m2_shell
+
+        pon_db_shell = _extract_rule_shell("workflow/rules/mutect2.smk", "pon_genomicsdb")
+        assert "GenomicsDBImport" in pon_db_shell
+        assert "--merge-input-intervals true" in pon_db_shell
+
+        pon_create_shell = _extract_rule_shell("workflow/rules/mutect2.smk", "pon_create")
+        assert "CreateSomaticPanelOfNormals" in pon_create_shell
+        assert "gendb://{input.db}" in pon_create_shell
+
+        mask_shell = _extract_rule_shell("workflow/rules/mutect2.smk", "pon_mask_hotspots")
+        bin_dir = tmp_path / "bin"
+        bin_dir.mkdir()
+        bcftools_args_file = tmp_path / "bcftools_mask_args.txt"
+        bcftools_bin = bin_dir / "bcftools"
+        bcftools_bin.write_text(
+            f'#!/usr/bin/env bash\nprintf "%s\\n" "$@" > "{bcftools_args_file}"\n'
+        )
+        bcftools_bin.chmod(0o755)
+
+        script = mask_shell.format(
+            input=_DefaultNamespace(
+                vcf="/output/mutect2/pon/pon.vcf.gz",
+                tbi="/output/mutect2/pon/pon.vcf.gz.tbi",
+                mask_bed="hotspots_pad15.bed",
+            ),
+            output=_DefaultNamespace(
+                vcf="/output/mutect2/pon/pon.masked.vcf.gz",
+                tbi="/output/mutect2/pon/pon.masked.vcf.gz.tbi",
+            ),
+            log=str(tmp_path / "mask.log"),
+        )
+        env = {**os.environ, "PATH": f"{bin_dir}:{os.environ['PATH']}"}
+        res = subprocess.run(
+            ["bash", "-euo", "pipefail", "-c", script],
+            env=env,
+            capture_output=True,
+            text=True,
+        )
+        assert res.returncode == 0
+        args = bcftools_args_file.read_text().splitlines()
+        assert args[:5] == ["view", "-T", "^hotspots_pad15.bed", "-Oz", "-W=tbi"]
+
+

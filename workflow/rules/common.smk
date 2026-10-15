@@ -39,6 +39,7 @@ INTERVALS_DIR = config["paths"].get("intervals_dir", os.path.join(OUTPUT_DIR, "i
 # GATK resources (optional for FreeBayes-only runs)
 GATK_RES = config.get("gatk_resources", {})
 PON = GATK_RES.get("panel_of_normals", "")
+PON_MASK_BED = GATK_RES.get("pon_mask_bed", "")
 AF_GNOMAD = GATK_RES.get("af_only_gnomad", "")
 COMMON_GNOMAD = GATK_RES.get("common_biallelic_gnomad", "")
 
@@ -62,6 +63,7 @@ BCFTOOLS_STATS_EXTRA = config.get("params", {}).get("bcftools_stats", {}).get("e
 
 # -- Output subdirectories ---------------------------------------------------
 MUTECT2_DIR = os.path.join(OUTPUT_DIR, "mutect2")
+MUTECT2_PON_DIR = os.path.join(MUTECT2_DIR, "pon")
 MUTECT2_SCATTER_DIR = os.path.join(MUTECT2_DIR, "scattered")
 MUTECT2_MERGED_DIR = os.path.join(MUTECT2_DIR, "merged")
 MUTECT2_CONTAM_DIR = os.path.join(MUTECT2_DIR, "contamination")
@@ -96,6 +98,15 @@ def get_normal_bams():
 
 def has_normal(sample):
     return _has_matched_normal_impl(samples_df, sample)
+
+
+def get_pon(wildcards=None):
+    """Return pre-built Panel of Normals or cohort-generated PoN VCF."""
+    if PON:
+        return PON
+    if PON_MASK_BED:
+        return os.path.join(MUTECT2_PON_DIR, "pon.masked.vcf.gz")
+    return os.path.join(MUTECT2_PON_DIR, "pon.vcf.gz")
 
 
 # -- Input helper functions --------------------------------------------------

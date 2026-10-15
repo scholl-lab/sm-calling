@@ -11,13 +11,157 @@ wildcard_constraints:
     bam_basename="[A-Za-z0-9_.-]+",
 
 
+rule pon_mutect2:
+    """Per-normal tumor-only Mutect2 calling for cohort Panel of Normals."""
+    input:
+        bam=lambda wc: os.path.join(BAM_FOLDER, wc.bam_basename + BAM_EXT),
+        reference=REF,
+        target_bed=[TARGET_BED] if TARGET_BED else [],
+    output:
+        vcf=os.path.join(MUTECT2_PON_DIR, "{bam_basename}.pon.vcf.gz"),
+        tbi=os.path.join(MUTECT2_PON_DIR, "{bam_basename}.pon.vcf.gz.tbi"),
+        stats=os.path.join(MUTECT2_PON_DIR, "{bam_basename}.pon.vcf.gz.stats"),
+    params:
+        java_opts=get_java_opts,
+        interval_arg=f"-L {TARGET_BED}" if TARGET_BED else "",
+    retries: 2
+    resources:
+        mem_mb=lambda wildcards, attempt: 17600 * attempt,
+        runtime=lambda wildcards, attempt: 1440 * attempt,
+    conda:
+        "../envs/gatk.yaml"
+    log:
+        os.path.join(LOG_DIR, "pon_mutect2/{bam_basename}.log"),
+    benchmark:
+        os.path.join(LOG_DIR, "benchmarks/pon_mutect2/{bam_basename}.tsv")
+    shell:
+        r"""
+        gatk --java-options '{params.java_opts}' Mutect2 \
+            -R {input.reference} \
+            -I {input.bam} \
+            --max-mnp-distance 0 \
+            --native-pair-hmm-threads {threads} \
+            {params.interval_arg} \
+            -O {output.vcf} \
+            2> {log}
+        """
+
+
+rule pon_genomicsdb:
+    """Combine per-normal PoN VCFs into a GenomicsDB workspace."""
+    input:
+        vcfs=lambda wc: [
+            os.path.join(MUTECT2_PON_DIR, f"{bn}.pon.vcf.gz")
+            for bn in get_normal_bams()
+        ],
+        reference=REF,
+        target_bed=[TARGET_BED] if TARGET_BED else [],
+    output:
+        db=temp(directory(os.path.join(MUTECT2_PON_DIR, "pon_db"))),
+    params:
+        java_opts=get_java_opts,
+        vcf_args=lambda wc: " ".join(
+            f"-V {os.path.join(MUTECT2_PON_DIR, f'{bn}.pon.vcf.gz')}"
+            for bn in get_normal_bams()
+        ),
+        interval_arg=(
+            f"-L {TARGET_BED}"
+            if TARGET_BED
+            else " ".join(f"-L {c}" for c in CHROMOSOMES)
+        ),
+    retries: 2
+    resources:
+        mem_mb=lambda wildcards, attempt: 17600 * attempt,
+        runtime=lambda wildcards, attempt: 1440 * attempt,
+    conda:
+        "../envs/gatk.yaml"
+    log:
+        os.path.join(LOG_DIR, "pon_genomicsdb/genomicsdb.log"),
+    benchmark:
+        os.path.join(LOG_DIR, "benchmarks/pon_genomicsdb/genomicsdb.tsv")
+    shell:
+        r"""
+        rm -rf {output.db}
+        gatk --java-options '{params.java_opts}' GenomicsDBImport \
+            -R {input.reference} \
+            --genomicsdb-workspace-path {output.db} \
+            --merge-input-intervals true \
+            {params.interval_arg} \
+            {params.vcf_args} \
+            2> {log}
+        """
+
+
+rule pon_create:
+    """Create cohort Somatic Panel of Normals from GenomicsDB."""
+    input:
+        db=os.path.join(MUTECT2_PON_DIR, "pon_db"),
+        reference=REF,
+        gnomad=AF_GNOMAD,
+    output:
+        vcf=os.path.join(MUTECT2_PON_DIR, "pon.vcf.gz"),
+        tbi=os.path.join(MUTECT2_PON_DIR, "pon.vcf.gz.tbi"),
+    params:
+        java_opts=get_java_opts,
+    retries: 2
+    resources:
+        mem_mb=lambda wildcards, attempt: 17600 * attempt,
+        runtime=lambda wildcards, attempt: 1440 * attempt,
+    conda:
+        "../envs/gatk.yaml"
+    log:
+        os.path.join(LOG_DIR, "pon_create/pon.log"),
+    benchmark:
+        os.path.join(LOG_DIR, "benchmarks/pon_create/pon.tsv")
+    shell:
+        r"""
+        gatk --java-options '{params.java_opts}' CreateSomaticPanelOfNormals \
+            -R {input.reference} \
+            --germline-resource {input.gnomad} \
+            -V gendb://{input.db} \
+            -O {output.vcf} \
+            2> {log}
+        """
+
+
+rule pon_mask_hotspots:
+    """Mask recurrent somatic hotspot regions out of the cohort Panel of Normals."""
+    input:
+        vcf=os.path.join(MUTECT2_PON_DIR, "pon.vcf.gz"),
+        tbi=os.path.join(MUTECT2_PON_DIR, "pon.vcf.gz.tbi"),
+        mask_bed=lambda wc: PON_MASK_BED,
+    output:
+        vcf=os.path.join(MUTECT2_PON_DIR, "pon.masked.vcf.gz"),
+        tbi=os.path.join(MUTECT2_PON_DIR, "pon.masked.vcf.gz.tbi"),
+    retries: 2
+    resources:
+        mem_mb=lambda wildcards, attempt: 4000 * attempt,
+        runtime=lambda wildcards, attempt: 120 * attempt,
+    conda:
+        "../envs/gatk.yaml"
+    log:
+        os.path.join(LOG_DIR, "pon_mask_hotspots/pon_masked.log"),
+    benchmark:
+        os.path.join(LOG_DIR, "benchmarks/pon_mask_hotspots/pon_masked.tsv")
+    shell:
+        r"""
+        bcftools view \
+            -T ^{input.mask_bed} \
+            -Oz \
+            -W=tbi \
+            -o {output.vcf} \
+            {input.vcf} \
+            2> {log}
+        """
+
+
 rule mutect2_call:
     """Scatter-parallel Mutect2 somatic variant calling."""
     input:
         tumor_bam=get_tumor_bam,
         normal_bam=get_normal_bam,
         reference=REF,
-        pon=PON,
+        pon=get_pon,
         gnomad=AF_GNOMAD,
         intervals=get_interval_input,
     output:

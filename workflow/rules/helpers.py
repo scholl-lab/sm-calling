@@ -155,9 +155,16 @@ def build_mutect2_extra_args(
 
 
 def get_normal_bam_basenames(samples_df: pd.DataFrame) -> list[str]:
-    """Return sorted basenames of all normal BAMs (for NormalDB)."""
+    """Return sorted basenames of normal BAMs (for PoN and PureCN NormalDB)."""
+    has_in_pon = "in_pon" in samples_df.columns
     normals: set[str] = set()
     for _, row in samples_df.iterrows():
+        if has_in_pon and str(row.get("in_pon", "")).strip().lower() not in (
+            "yes",
+            "true",
+            "1",
+        ):
+            continue
         normal = row.get("normal_bam", "")
         if (
             row.get("analysis_type") == "tumor_normal"

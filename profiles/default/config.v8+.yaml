@@ -22,6 +22,10 @@ default-resources:
   runtime: 120
 
 set-threads:
+  pon_mutect2: 4
+  pon_genomicsdb: 2
+  pon_create: 2
+  pon_mask_hotspots: 1
   mutect2_call: 4
   gather_mutect2_vcfs: 4
   merge_mutect2_stats: 4

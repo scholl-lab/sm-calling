@@ -16,5 +16,8 @@ properties:
     type: string
     enum: ["tumor_only", "tumor_normal", "germline"]
     description: Type of variant calling analysis.
+  in_pon:
+    type: string
+    description: "Optional flag ('yes'/'no') controlling inclusion of normal_bam in cohort PoN."
 
 required: [sample, tumor_bam, analysis_type]
