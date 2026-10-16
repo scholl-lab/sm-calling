@@ -557,6 +557,35 @@ class TestProfilesAndResources:
         idx = gatk_args.index("--native-pair-hmm-threads")
         assert gatk_args[idx + 1] == "4"
 
+    def test_profile_runtime_has_explicit_time_unit(self):
+        import re
+        from pathlib import Path
+
+        import yaml
+
+        root = Path(__file__).parent.parent
+        profiles = sorted((root / "profiles").glob("*/config*.yaml"))
+        assert profiles
+        checked = 0
+        for path in profiles:
+            data = yaml.safe_load(path.read_text()) or {}
+            default_res = data.get("default-resources") or {}
+            if "runtime" in default_res:
+                val = default_res["runtime"]
+                assert isinstance(val, str) and re.fullmatch(r"\d+[smhd]", val), (
+                    f"{path}: default-resources.runtime must have an explicit unit, got {val!r}"
+                )
+                checked += 1
+            set_res = data.get("set-resources") or {}
+            for rule, resources in set_res.items():
+                if isinstance(resources, dict) and "runtime" in resources:
+                    val = resources["runtime"]
+                    assert isinstance(val, str) and re.fullmatch(r"\d+[smhd]", val), (
+                        f"{path}: set-resources.{rule}.runtime must have an explicit unit, got {val!r}"
+                    )
+                    checked += 1
+        assert checked >= 3
+
 
 class TestFilterMutectCallsNormAndExtra:
     def test_extra_passthrough_and_bcftools_norm_without_atomize(
