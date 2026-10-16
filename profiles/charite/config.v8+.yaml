@@ -6,7 +6,7 @@ latency-wait: 60
 
 default-resources:
   slurm_partition: compute
-  runtime: 120
+  runtime: "120m"
 
 # Partition overrides for long-running jobs
 set-resources:

@@ -7,4 +7,4 @@ latency-wait: 60
 default-resources:
   slurm_partition: medium
   slurm_account: hpc-ag-scholl
-  runtime: 120
+  runtime: "120m"
