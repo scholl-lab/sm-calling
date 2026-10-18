@@ -41,6 +41,7 @@ INTERVALS_DIR = config["paths"].get("intervals_dir", os.path.join(OUTPUT_DIR, "i
 # GATK resources (optional for FreeBayes-only runs)
 GATK_RES = config.get("gatk_resources", {})
 PON = GATK_RES.get("panel_of_normals", "")
+EXTRA_PON = GATK_RES.get("extra_panel_of_normals", "")
 PON_MASK_BED = GATK_RES.get("pon_mask_bed", "")
 AF_GNOMAD = GATK_RES.get("af_only_gnomad", "")
 COMMON_GNOMAD = GATK_RES.get("common_biallelic_gnomad", "")
@@ -110,9 +111,10 @@ def get_pon(wildcards=None):
     """Return pre-built Panel of Normals or cohort-generated PoN VCF."""
     if PON:
         return PON
+    stem = "pon.combined" if EXTRA_PON else "pon"
     if PON_MASK_BED:
-        return os.path.join(MUTECT2_PON_DIR, "pon.masked.vcf.gz")
-    return os.path.join(MUTECT2_PON_DIR, "pon.vcf.gz")
+        return os.path.join(MUTECT2_PON_DIR, f"{stem}.masked.vcf.gz")
+    return os.path.join(MUTECT2_PON_DIR, f"{stem}.vcf.gz")
 
 
 # -- Input helper functions --------------------------------------------------

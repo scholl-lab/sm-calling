@@ -25,5 +25,10 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - run: pip install pytest pandas pyyaml jsonschema
-      - run: pytest tests/ -v -m "not dryrun"
+      - name: Install bcftools 1.21
+        run: |
+          sudo apt-get update && sudo apt-get install -y --no-install-recommends libbz2-dev liblzma-dev zlib1g-dev
+          curl -fsSL https://github.com/samtools/bcftools/releases/download/1.21/bcftools-1.21.tar.bz2 | tar -xj -C /tmp
+          cd /tmp/bcftools-1.21 && ./configure --disable-libcurl && make -j"$(nproc)" && sudo make install
+      - run: pip install pytest pandas pyyaml jsonschema snakemake
+      - run: pytest tests/ -v
