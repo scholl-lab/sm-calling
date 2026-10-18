@@ -2,13 +2,9 @@
 
 import copy
 
+import jsonschema
 import pytest
 import yaml
-
-try:
-    import jsonschema
-except ImportError:
-    jsonschema = None
 
 SCHEMA_DIR = "workflow/schemas"
 
@@ -28,7 +24,6 @@ def samples_schema():
     return _load_schema("samples.schema.yaml")
 
 
-@pytest.mark.skipif(jsonschema is None, reason="jsonschema not installed")
 class TestConfigSchema:
     def test_valid_config(self, config_dict, config_schema):
         jsonschema.validate(config_dict, config_schema)
@@ -104,7 +99,6 @@ class TestConfigSchema:
         jsonschema.validate(cfg, config_schema)
 
 
-@pytest.mark.skipif(jsonschema is None, reason="jsonschema not installed")
 class TestSamplesSchema:
     def test_valid_sample(self, samples_schema):
         sample = {

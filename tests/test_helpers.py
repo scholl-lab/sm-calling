@@ -620,8 +620,7 @@ class TestFilterMutectCallsNormAndExtra:
                 if Path(candidate).exists():
                     real_bcftools = candidate
                     break
-        if not real_bcftools:
-            pytest.skip("bcftools binary not available")
+        assert real_bcftools, "bcftools binary not available"
 
         ref_fa = tmp_path / "ref.fa"
         ref_fa.write_text(">chr1\nACGTACGTACGT\n")
@@ -763,8 +762,7 @@ class TestFilterMutectCallsNormAndExtra:
                 if Path(candidate).exists():
                     real_bcftools = candidate
                     break
-        if not real_bcftools:
-            pytest.skip("bcftools binary not available")
+        assert real_bcftools, "bcftools binary not available"
 
         shell_tpl = _extract_rule_shell("workflow/rules/mutect2.smk", "filter_mutect_calls")
         awk_blocks = re.findall(r"awk -F'\\t' -v OFS='\\t' '(.*?)'", shell_tpl, re.S)
@@ -976,8 +974,7 @@ class TestCohortPonAndHotspotMasking:
                 if Path(candidate).exists():
                     real_bcftools = candidate
                     break
-        if not real_bcftools:
-            pytest.skip("bcftools binary not available")
+        assert real_bcftools, "bcftools binary not available"
 
         bcftools_dir = str(Path(real_bcftools).parent)
         ref_fa = tmp_path / "GRCh38.fna"
@@ -1268,8 +1265,7 @@ class TestSnakemakeDryRun:
         import yaml
 
         snakemake_bin = shutil.which("snakemake") or "/tmp/sm-venv/bin/snakemake"
-        if not Path(snakemake_bin).exists():
-            pytest.skip("snakemake binary not available")
+        assert Path(snakemake_bin).exists(), "snakemake binary not available"
 
         root = Path(__file__).parent.parent
         bam_dir = tmp_path / "bams"
@@ -1446,8 +1442,7 @@ class TestSnakemakeDryRun:
         import yaml
 
         snakemake_bin = shutil.which("snakemake") or "/tmp/sm-venv/bin/snakemake"
-        if not Path(snakemake_bin).exists():
-            pytest.skip("snakemake binary not available")
+        assert Path(snakemake_bin).exists(), "snakemake binary not available"
 
         root = Path(__file__).parent.parent
         bam_dir = tmp_path / "bams"
