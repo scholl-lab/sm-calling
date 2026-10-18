@@ -238,7 +238,9 @@ ref:
   build: "GRCh38"                    # "GRCh37" or "GRCh38"
 
 gatk_resources:                      # required for Mutect2
-  panel_of_normals: "/path/to/1000g_pon.hg38.vcf.gz"
+  panel_of_normals: "/path/to/1000g_pon.hg38.vcf.gz"  # or "" to build cohort PoN
+  extra_panel_of_normals: ""         # optional external PoN merged with cohort PoN
+  pon_mask_bed: ""                   # optional BED of hotspots masked from cohort/combined PoN
   af_only_gnomad: "/path/to/af-only-gnomad.hg38.vcf.gz"
   common_biallelic_gnomad: "/path/to/af-only-gnomad.hg38.common_biallelic.vcf.gz"
 

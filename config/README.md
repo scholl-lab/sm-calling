@@ -21,7 +21,9 @@ Unified pipeline configuration. All paths are relative to the repository root.
 
 | Field | Description |
 |-------|-------------|
-| `gatk_resources.panel_of_normals` | Path to Panel of Normals VCF |
+| `gatk_resources.panel_of_normals` | Path to prebuilt Panel of Normals VCF (or `""` to build a cohort PoN from normals) |
+| `gatk_resources.extra_panel_of_normals` | Optional sites-only PoN VCF (e.g. `1000g_pon.hg38.vcf.gz`) merged with the cohort PoN before hotspot masking |
+| `gatk_resources.pon_mask_bed` | Optional BED of recurrent somatic hotspot regions masked out of the cohort/combined PoN |
 | `gatk_resources.af_only_gnomad` | Path to gnomAD allele frequency VCF |
 | `gatk_resources.common_biallelic_gnomad` | Path to gnomAD common biallelic VCF |
 

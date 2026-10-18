@@ -57,15 +57,23 @@ class TestConfigSchema:
         with pytest.raises(jsonschema.ValidationError):
             jsonschema.validate(broken, config_schema)
 
+    def test_extra_panel_of_normals_and_pon_mask_bed(self, config_dict, config_schema):
+        cfg = copy.deepcopy(config_dict)
+        cfg["gatk_resources"]["extra_panel_of_normals"] = "/res/1000g_pon.hg38.vcf.gz"
+        cfg["gatk_resources"]["pon_mask_bed"] = "/res/hotspots_pad15.bed"
+        jsonschema.validate(cfg, config_schema)
+
+        broken = copy.deepcopy(cfg)
+        broken["gatk_resources"]["extra_panel_of_normals"] = 123
+        with pytest.raises(jsonschema.ValidationError):
+            jsonschema.validate(broken, config_schema)
 
     def test_mutect2_genotype_germline_sites_boolean(self, config_dict, config_schema):
         cfg = copy.deepcopy(config_dict)
         cfg["params"]["mutect2"]["genotype_germline_sites"] = True
         jsonschema.validate(cfg, config_schema)
 
-    def test_mutect2_genotype_germline_sites_rejects_string(
-        self, config_dict, config_schema
-    ):
+    def test_mutect2_genotype_germline_sites_rejects_string(self, config_dict, config_schema):
         cfg = copy.deepcopy(config_dict)
         cfg["params"]["mutect2"]["genotype_germline_sites"] = "yes"
         with pytest.raises(jsonschema.ValidationError):

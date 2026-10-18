@@ -118,15 +118,125 @@ rule pon_create:
         """
 
 
+rule pon_combine:
+    """Merge cohort Panel of Normals with an external PoN VCF (e.g. 1000G)."""
+    input:
+        cohort_vcf=os.path.join(MUTECT2_PON_DIR, "pon.vcf.gz"),
+        cohort_tbi=os.path.join(MUTECT2_PON_DIR, "pon.vcf.gz.tbi"),
+        extra_vcf=lambda wc: EXTRA_PON,
+        reference=REF,
+    output:
+        vcf=os.path.join(MUTECT2_PON_DIR, "pon.combined.vcf.gz"),
+        tbi=os.path.join(MUTECT2_PON_DIR, "pon.combined.vcf.gz.tbi"),
+    retries: 2
+    resources:
+        mem_mb=lambda wildcards, attempt: 4000 * attempt,
+        runtime=lambda wildcards, attempt: 120 * attempt,
+    conda:
+        "../envs/gatk.yaml"
+    log:
+        os.path.join(LOG_DIR, "pon_combine/pon_combined.log"),
+    benchmark:
+        os.path.join(LOG_DIR, "benchmarks/pon_combine/pon_combined.tsv")
+    shell:
+        r"""
+        tmpdir=$(mktemp -d)
+        trap 'rm -rf "$tmpdir"' EXIT
+
+        : > {log}
+        ref="{input.reference}"
+        dict_file="${{ref%.*}}.dict"
+        if [ ! -s "$dict_file" ]; then
+            dict_file="${{ref}}.dict"
+        fi
+        if [ -s "$dict_file" ]; then
+            awk -F'\t' '/^@SQ\t/ {{
+                sn=""; ln=""
+                for (i=2; i<=NF; i++) {{
+                    if ($i ~ /^SN:/) sn=substr($i, 4)
+                    else if ($i ~ /^LN:/) ln=substr($i, 4)
+                }}
+                sub(/\r$/, "", sn)
+                sub(/\r$/, "", ln)
+                if (sn != "" && ln != "") print sn "\t" ln
+            }}' "$dict_file" > "$tmpdir/contigs.tsv"
+        elif [ -s "${{ref}}.fai" ]; then
+            awk -F'\t' 'NF >= 2 {{sub(/\r$/, "", $2); print $1 "\t" $2}}' "${{ref}}.fai" > "$tmpdir/contigs.tsv"
+        elif [ -s "$ref" ]; then
+            awk '/^>/ {{
+                if (sn != "") print sn "\t" ln
+                sn = substr($1, 2); sub(/\r$/, "", sn); ln = 0; next
+            }}
+            {{ gsub(/[[:space:]]/, ""); ln += length($0) }}
+            END {{ if (sn != "") print sn "\t" ln }}' "$ref" > "$tmpdir/contigs.tsv"
+        fi
+        if [ ! -s "$tmpdir/contigs.tsv" ]; then
+            echo "ERROR: could not extract reference contigs for $ref" >> {log}
+            exit 1
+        fi
+
+        sanitize_pon() {{
+            local in_vcf="$1"
+            local out_vcf="$2"
+            bcftools view -G "$in_vcf" 2>> {log} \
+            | awk -F'\t' -v OFS='\t' '
+                FILENAME == ARGV[1] {{
+                    keep[$1] = 1
+                    order[++n] = $1
+                    len[$1] = $2
+                    next
+                }}
+                /^##contig=/ {{ next }}
+                /^#CHROM/ {{
+                    for (i = 1; i <= n; i++) {{
+                        c = order[i]
+                        print "##contig=<ID=" c ",length=" len[c] ">"
+                    }}
+                    print
+                    next
+                }}
+                /^#/ {{ print; next }}
+                ($1 in keep) {{ print }}
+            ' "$tmpdir/contigs.tsv" - \
+            | bcftools sort -T "$tmpdir/sort" -Oz -W=tbi -o "$out_vcf" 2>> {log}
+        }}
+
+        sanitize_pon "{input.cohort_vcf}" "$tmpdir/cohort.vcf.gz"
+        sanitize_pon "{input.extra_vcf}" "$tmpdir/extra.vcf.gz"
+
+        bcftools concat \
+            -a \
+            -D \
+            -Oz \
+            -W=tbi \
+            -o {output.vcf} \
+            "$tmpdir/cohort.vcf.gz" \
+            "$tmpdir/extra.vcf.gz" \
+            2>> {log}
+        """
+
+
 rule pon_mask_hotspots:
     """Mask recurrent somatic hotspot regions out of the cohort Panel of Normals."""
     input:
-        vcf=os.path.join(MUTECT2_PON_DIR, "pon.vcf.gz"),
-        tbi=os.path.join(MUTECT2_PON_DIR, "pon.vcf.gz.tbi"),
+        vcf=os.path.join(
+            MUTECT2_PON_DIR,
+            "pon.combined.vcf.gz" if EXTRA_PON else "pon.vcf.gz",
+        ),
+        tbi=os.path.join(
+            MUTECT2_PON_DIR,
+            "pon.combined.vcf.gz.tbi" if EXTRA_PON else "pon.vcf.gz.tbi",
+        ),
         mask_bed=lambda wc: PON_MASK_BED,
     output:
-        vcf=os.path.join(MUTECT2_PON_DIR, "pon.masked.vcf.gz"),
-        tbi=os.path.join(MUTECT2_PON_DIR, "pon.masked.vcf.gz.tbi"),
+        vcf=os.path.join(
+            MUTECT2_PON_DIR,
+            "pon.combined.masked.vcf.gz" if EXTRA_PON else "pon.masked.vcf.gz",
+        ),
+        tbi=os.path.join(
+            MUTECT2_PON_DIR,
+            "pon.combined.masked.vcf.gz.tbi" if EXTRA_PON else "pon.masked.vcf.gz.tbi",
+        ),
     retries: 2
     resources:
         mem_mb=lambda wildcards, attempt: 4000 * attempt,

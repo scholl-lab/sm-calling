@@ -26,6 +26,9 @@ properties:
     properties:
       panel_of_normals:
         type: string
+      extra_panel_of_normals:
+        type: string
+        default: ""
       pon_mask_bed:
         type: string
         default: ""

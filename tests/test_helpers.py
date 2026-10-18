@@ -885,6 +885,39 @@ class TestCohortPonAndHotspotMasking:
         exec((root / "workflow/rules/common.smk").read_text(), ns_unmasked)
         assert ns_unmasked["get_pon"]() == "/output/mutect2/pon/pon.vcf.gz"
 
+        cfg_combined = dict(config_dict)
+        cfg_combined["gatk_resources"] = {
+            **config_dict["gatk_resources"],
+            "panel_of_normals": "",
+            "extra_panel_of_normals": "/res/1000g_pon.hg38.vcf.gz",
+            "pon_mask_bed": "",
+        }
+        ns_combined = {"config": cfg_combined, "samples_df": df}
+        exec((root / "workflow/rules/common.smk").read_text(), ns_combined)
+        assert ns_combined["get_pon"]() == "/output/mutect2/pon/pon.combined.vcf.gz"
+
+        cfg_combined_masked = dict(config_dict)
+        cfg_combined_masked["gatk_resources"] = {
+            **config_dict["gatk_resources"],
+            "panel_of_normals": "",
+            "extra_panel_of_normals": "/res/1000g_pon.hg38.vcf.gz",
+            "pon_mask_bed": "hotspots_pad15.bed",
+        }
+        ns_combined_masked = {"config": cfg_combined_masked, "samples_df": df}
+        exec((root / "workflow/rules/common.smk").read_text(), ns_combined_masked)
+        assert ns_combined_masked["get_pon"]() == "/output/mutect2/pon/pon.combined.masked.vcf.gz"
+
+        cfg_prebuilt = dict(config_dict)
+        cfg_prebuilt["gatk_resources"] = {
+            **config_dict["gatk_resources"],
+            "panel_of_normals": "/res/prebuilt_pon.vcf.gz",
+            "extra_panel_of_normals": "/res/1000g_pon.hg38.vcf.gz",
+            "pon_mask_bed": "hotspots_pad15.bed",
+        }
+        ns_prebuilt = {"config": cfg_prebuilt, "samples_df": df}
+        exec((root / "workflow/rules/common.smk").read_text(), ns_prebuilt)
+        assert ns_prebuilt["get_pon"]() == "/res/prebuilt_pon.vcf.gz"
+
         pon_m2_shell = _extract_rule_shell("workflow/rules/mutect2.smk", "pon_mutect2")
         assert "--max-mnp-distance 0" in pon_m2_shell
 
@@ -928,6 +961,163 @@ class TestCohortPonAndHotspotMasking:
         assert res.returncode == 0
         args = bcftools_args_file.read_text().splitlines()
         assert args[:5] == ["view", "-T", "^hotspots_pad15.bed", "-Oz", "-W=tbi"]
+
+    def test_pon_combine_and_hotspot_masking_both_sources(self, tmp_path):
+        import shutil
+        import subprocess
+        from pathlib import Path
+
+        real_bcftools = shutil.which("bcftools")
+        if not real_bcftools:
+            for candidate in (
+                "/home/bernt-popp/miniforge3/envs/vntyper/bin/bcftools",
+                "/home/bernt-popp/miniforge3/envs/varlens-tools/bin/bcftools",
+            ):
+                if Path(candidate).exists():
+                    real_bcftools = candidate
+                    break
+        if not real_bcftools:
+            pytest.skip("bcftools binary not available")
+
+        bcftools_dir = str(Path(real_bcftools).parent)
+        ref_fa = tmp_path / "GRCh38.fna"
+        ref_fa.write_text(">chr1\n" + "A" * 1000 + "\n>chr2\n" + "C" * 1000 + "\n")
+        ref_dict = tmp_path / "GRCh38.dict"
+        ref_dict.write_text("@HD\tVN:1.6\n@SQ\tSN:chr1\tLN:1000\n@SQ\tSN:chr2\tLN:1000\n")
+
+        # Hotspot centered at chr1:100 (1-based); ±15 bp window [85, 115] -> 0-based BED [84, 115)
+        cohort_txt = (
+            "##fileformat=VCFv4.2\n"
+            "##contig=<ID=chr1,length=1000>\n"
+            "##contig=<ID=chr2,length=1000>\n"
+            "#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\n"
+            "chr1\t50\t.\tA\tG\t.\tPASS\t.\n"
+            "chr1\t85\t.\tA\tT\t.\tPASS\t.\n"
+            "chr1\t105\t.\tA\tC\t.\tPASS\t.\n"
+            "chr2\t300\t.\tC\tG\t.\tPASS\t.\n"
+        )
+        extra_txt = (
+            "##fileformat=VCFv4.2\n"
+            "##contig=<ID=chr2,length=1000>\n"
+            "##contig=<ID=chr1,length=1000>\n"
+            "##contig=<ID=chrUn_decoy,length=500>\n"
+            "#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\n"
+            "chr1\t50\t.\tA\tG\t.\tPASS\t.\n"
+            "chr1\t95\t.\tC\tA\t.\tPASS\t.\n"
+            "chr1\t115\t.\tG\tA\t.\tPASS\t.\n"
+            "chr1\t500\t.\tG\tT\t.\tPASS\t.\n"
+            "chrUn_decoy\t10\t.\tA\tC\t.\tPASS\t.\n"
+        )
+        cohort_vcf = tmp_path / "pon.vcf.gz"
+        extra_vcf = tmp_path / "extra_pon.vcf.gz"
+        for vcf_path, content in ((cohort_vcf, cohort_txt), (extra_vcf, extra_txt)):
+            subprocess.run(
+                [real_bcftools, "view", "-Oz", "-W=tbi", "-o", str(vcf_path)],
+                input=content,
+                text=True,
+                check=True,
+            )
+
+        combined_vcf = tmp_path / "pon.combined.vcf.gz"
+        combine_shell = _extract_rule_shell("workflow/rules/mutect2.smk", "pon_combine")
+        script_combine = combine_shell.format(
+            input=_DefaultNamespace(
+                cohort_vcf=str(cohort_vcf),
+                cohort_tbi=f"{cohort_vcf}.tbi",
+                extra_vcf=str(extra_vcf),
+                reference=str(ref_fa),
+            ),
+            output=_DefaultNamespace(
+                vcf=str(combined_vcf),
+                tbi=f"{combined_vcf}.tbi",
+            ),
+            log=str(tmp_path / "combine.log"),
+        )
+        env = {**os.environ, "PATH": f"{bcftools_dir}:{os.environ['PATH']}"}
+        res_c = subprocess.run(
+            ["bash", "-euo", "pipefail", "-c", script_combine],
+            env=env,
+            capture_output=True,
+            text=True,
+        )
+        assert res_c.returncode == 0, (tmp_path / "combine.log").read_text() + res_c.stderr
+        assert Path(f"{combined_vcf}.tbi").exists()
+
+        hdr_contigs = [
+            line
+            for line in subprocess.run(
+                [real_bcftools, "view", "-h", str(combined_vcf)],
+                capture_output=True,
+                text=True,
+                check=True,
+            ).stdout.splitlines()
+            if line.startswith("##contig=")
+        ]
+        assert hdr_contigs == [
+            "##contig=<ID=chr1,length=1000>",
+            "##contig=<ID=chr2,length=1000>",
+        ]
+
+        combined_positions = [
+            (line.split("\t")[0], int(line.split("\t")[1]))
+            for line in subprocess.run(
+                [real_bcftools, "view", "-H", str(combined_vcf)],
+                capture_output=True,
+                text=True,
+                check=True,
+            ).stdout.splitlines()
+        ]
+        # Decoy contig dropped, duplicate chr1:50 deduplicated, all chr1/chr2 records present
+        assert combined_positions == [
+            ("chr1", 50),
+            ("chr1", 85),
+            ("chr1", 95),
+            ("chr1", 105),
+            ("chr1", 115),
+            ("chr1", 500),
+            ("chr2", 300),
+        ]
+
+        mask_bed = tmp_path / "hotspots_pad15.bed"
+        mask_bed.write_text("chr1\t84\t115\n")
+        masked_vcf = tmp_path / "pon.combined.masked.vcf.gz"
+        mask_shell = _extract_rule_shell("workflow/rules/mutect2.smk", "pon_mask_hotspots")
+        script_mask = mask_shell.format(
+            input=_DefaultNamespace(
+                vcf=str(combined_vcf),
+                tbi=f"{combined_vcf}.tbi",
+                mask_bed=str(mask_bed),
+            ),
+            output=_DefaultNamespace(
+                vcf=str(masked_vcf),
+                tbi=f"{masked_vcf}.tbi",
+            ),
+            log=str(tmp_path / "mask.log"),
+        )
+        res_m = subprocess.run(
+            ["bash", "-euo", "pipefail", "-c", script_mask],
+            env=env,
+            capture_output=True,
+            text=True,
+        )
+        assert res_m.returncode == 0, (tmp_path / "mask.log").read_text() + res_m.stderr
+        assert Path(f"{masked_vcf}.tbi").exists()
+
+        masked_positions = [
+            (line.split("\t")[0], int(line.split("\t")[1]))
+            for line in subprocess.run(
+                [real_bcftools, "view", "-H", str(masked_vcf)],
+                capture_output=True,
+                text=True,
+                check=True,
+            ).stdout.splitlines()
+        ]
+        # Hotspot ±15 bp positions (85, 95, 105, 115) from both cohort and extra PON are absent
+        assert masked_positions == [
+            ("chr1", 50),
+            ("chr1", 500),
+            ("chr2", 300),
+        ]
 
     def test_pon_intervals_without_chromosome_scattering_or_targets(self, config_dict, samples_df):
         from pathlib import Path
@@ -1247,3 +1437,157 @@ class TestSnakemakeDryRun:
         assert "APA_1_chr1.vcf.gz" in res_chr.stdout
         assert "freebayes_chr1.vcf.gz" in res_chr.stdout
         assert "chrM" not in res_chr.stdout
+
+    def test_snakemake_dryrun_pon_combinations(self, tmp_path):
+        import shutil
+        import subprocess
+        from pathlib import Path
+
+        import yaml
+
+        snakemake_bin = shutil.which("snakemake") or "/tmp/sm-venv/bin/snakemake"
+        if not Path(snakemake_bin).exists():
+            pytest.skip("snakemake binary not available")
+
+        root = Path(__file__).parent.parent
+        bam_dir = tmp_path / "bams"
+        bam_dir.mkdir()
+        for bn in ("S1_T", "S1_N"):
+            (bam_dir / f"{bn}.merged.dedup.bqsr.bam").write_text("")
+
+        ref_fa = tmp_path / "ref.fa"
+        ref_fa.write_text(">chr1\nACGT\n")
+        gnomad_vcf = tmp_path / "gnomad.vcf.gz"
+        gnomad_vcf.write_text("")
+        common_gnomad_vcf = tmp_path / "common_gnomad.vcf.gz"
+        common_gnomad_vcf.write_text("")
+        prebuilt_pon = tmp_path / "prebuilt_pon.vcf.gz"
+        prebuilt_pon.write_text("")
+        extra_pon = tmp_path / "1000g_pon.hg38.vcf.gz"
+        extra_pon.write_text("")
+        mask_bed = tmp_path / "hotspots_pad15.bed"
+        mask_bed.write_text("chr1\t1\t2\n")
+
+        samples_tsv = tmp_path / "samples.tsv"
+        samples_tsv.write_text(
+            "sample\ttumor_bam\tnormal_bam\tanalysis_type\tin_pon\n"
+            "S1\tS1_T\tS1_N\ttumor_normal\tyes\n"
+        )
+
+        base_cfg = {
+            "caller": "mutect2",
+            "paths": {
+                "samples": str(samples_tsv),
+                "bam_folder": str(bam_dir),
+                "output_folder": str(tmp_path / "out"),
+                "log_subdir": "logs",
+            },
+            "ref": {
+                "genome": str(ref_fa),
+                "build": "GRCh38",
+            },
+            "bam": {
+                "file_extension": ".merged.dedup.bqsr.bam",
+            },
+            "scatter": {
+                "mode": "chromosome",
+                "chromosomes": ["chr1"],
+            },
+        }
+
+        cases = [
+            (
+                "prebuilt_unmasked",
+                str(prebuilt_pon),
+                "",
+                "",
+                set(),
+                {"pon_create", "pon_combine", "pon_mask_hotspots"},
+                f"--panel-of-normals {prebuilt_pon}",
+            ),
+            (
+                "prebuilt_masked",
+                str(prebuilt_pon),
+                "",
+                str(mask_bed),
+                set(),
+                {"pon_create", "pon_combine", "pon_mask_hotspots"},
+                f"--panel-of-normals {prebuilt_pon}",
+            ),
+            (
+                "cohort_unmasked",
+                "",
+                "",
+                "",
+                {"pon_create"},
+                {"pon_combine", "pon_mask_hotspots"},
+                "--panel-of-normals " + str(tmp_path / "out/mutect2/pon/pon.vcf.gz"),
+            ),
+            (
+                "cohort_masked",
+                "",
+                "",
+                str(mask_bed),
+                {"pon_create", "pon_mask_hotspots"},
+                {"pon_combine"},
+                "--panel-of-normals " + str(tmp_path / "out/mutect2/pon/pon.masked.vcf.gz"),
+            ),
+            (
+                "cohort_extra_unmasked",
+                "",
+                str(extra_pon),
+                "",
+                {"pon_create", "pon_combine"},
+                {"pon_mask_hotspots"},
+                "--panel-of-normals " + str(tmp_path / "out/mutect2/pon/pon.combined.vcf.gz"),
+            ),
+            (
+                "cohort_extra_masked",
+                "",
+                str(extra_pon),
+                str(mask_bed),
+                {"pon_create", "pon_combine", "pon_mask_hotspots"},
+                set(),
+                "--panel-of-normals "
+                + str(tmp_path / "out/mutect2/pon/pon.combined.masked.vcf.gz"),
+            ),
+        ]
+
+        for name, pon, extra, mask, expected_rules, forbidden_rules, expected_pon_arg in cases:
+            cfg = {
+                **base_cfg,
+                "gatk_resources": {
+                    "panel_of_normals": pon,
+                    "extra_panel_of_normals": extra,
+                    "pon_mask_bed": mask,
+                    "af_only_gnomad": str(gnomad_vcf),
+                    "common_biallelic_gnomad": str(common_gnomad_vcf),
+                },
+            }
+            cfg_file = tmp_path / f"config_{name}.yaml"
+            cfg_file.write_text(yaml.safe_dump(cfg))
+            res = subprocess.run(
+                [
+                    snakemake_bin,
+                    "-s",
+                    str(root / "workflow/Snakefile"),
+                    "--configfile",
+                    str(cfg_file),
+                    "--workflow-profile",
+                    str(root / "profiles/default"),
+                    "--executor",
+                    "dryrun",
+                    "-n",
+                    "-p",
+                ],
+                cwd=str(tmp_path),
+                capture_output=True,
+                text=True,
+            )
+            assert res.returncode == 0, f"{name}: {res.stderr}\n{res.stdout}"
+            out = res.stdout
+            for r in expected_rules:
+                assert f"rule {r}:" in out, f"{name}: expected rule {r} in DAG"
+            for r in forbidden_rules:
+                assert f"rule {r}:" not in out, f"{name}: unexpected rule {r} in DAG"
+            assert expected_pon_arg in out, f"{name}: expected {expected_pon_arg}"
