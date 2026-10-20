@@ -431,6 +431,10 @@ workflow/Snakefile
 ### Mutect2 DAG
 
 ```
+Normal BAMs (cohort PoN, when panel_of_normals is "")
+    ├── pon_mutect2 (per normal x scatter_unit)         [temp]
+    ├── pon_gather_vcfs (per normal)
+    ├── pon_genomicsdb -> pon_create (-> pon_combine, pon_mask_hotspots)
 BAM files
     ├── mutect2_call (per sample x scatter_unit)        [temp]
     ├── get_pileup_summaries (per unique BAM)
