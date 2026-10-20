@@ -1,0 +1,8 @@
+version = 1
+revision = 3
+requires-python = ">=3.10"
+
+[[package]]
+name = "sm-calling"
+version = "1.4.0"
+source = { virtual = "." }

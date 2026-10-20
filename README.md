@@ -431,6 +431,10 @@ workflow/Snakefile
 ### Mutect2 DAG
 
 ```
+Normal BAMs (cohort PoN, when panel_of_normals is "")
+    ├── pon_mutect2 (per normal x scatter_unit)         [temp]
+    ├── pon_gather_vcfs (per normal)
+    ├── pon_genomicsdb -> pon_create (-> pon_combine, pon_mask_hotspots)
 BAM files
     ├── mutect2_call (per sample x scatter_unit)        [temp]
     ├── get_pileup_summaries (per unique BAM)
@@ -475,7 +479,7 @@ BAM files + Mutect2 VCFs
 | Conda env | Tools | Used by |
 |-----------|-------|---------|
 | `workflow/envs/gatk.yaml` | gatk4 4.6.1.0, samtools 1.21 | Mutect2 pipeline |
-| `workflow/envs/freebayes.yaml` | freebayes 1.3.8, htslib 1.21 | FreeBayes calling |
+| `workflow/envs/freebayes.yaml` | freebayes 1.3.10, vcflib 1.0.15, htslib 1.21 | FreeBayes calling |
 | `workflow/envs/bcftools.yaml` | bcftools 1.21, htslib 1.21 | VCF merge + normalize, bcftools stats |
 | `workflow/envs/multiqc.yaml` | MultiQC 1.27 | QC report aggregation |
 | `workflow/envs/purecn.yaml` | PureCN 2.12.0, r-optparse 1.7.5 | Copy number analysis |
@@ -487,7 +491,7 @@ To skip per-rule conda and use pre-installed tools instead:
 ```bash
 # Install tools into the snakemake environment
 mamba install -n snakemake -c bioconda -c conda-forge \
-    gatk4=4.6.1.0 samtools=1.21 freebayes=1.3.8 bcftools=1.21 htslib=1.21
+    gatk4=4.6.1.0 samtools=1.21 freebayes=1.3.10 bcftools=1.21 htslib=1.21
 
 # Run with --sdm none
 sbatch scripts/run_snakemake.sh config/config.yaml --sdm none

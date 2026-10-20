@@ -23,6 +23,7 @@ default-resources:
 
 set-threads:
   pon_mutect2: 4
+  pon_gather_vcfs: 2
   pon_genomicsdb: 2
   pon_create: 2
   pon_combine: 1

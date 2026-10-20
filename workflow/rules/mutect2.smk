@@ -12,18 +12,31 @@ wildcard_constraints:
 
 
 rule pon_mutect2:
-    """Per-normal tumor-only Mutect2 calling for cohort Panel of Normals."""
+    """Per-normal tumor-only Mutect2 for the cohort Panel of Normals, scattered like mutect2_call."""
     input:
         bam=lambda wc: os.path.join(BAM_FOLDER, wc.bam_basename + BAM_EXT),
         reference=REF,
-        target_bed=[TARGET_BED] if TARGET_BED else [],
+        intervals=get_interval_input,
     output:
-        vcf=os.path.join(MUTECT2_PON_DIR, "{bam_basename}.pon.vcf.gz"),
-        tbi=os.path.join(MUTECT2_PON_DIR, "{bam_basename}.pon.vcf.gz.tbi"),
-        stats=os.path.join(MUTECT2_PON_DIR, "{bam_basename}.pon.vcf.gz.stats"),
+        vcf=temp(
+            ensure(
+                os.path.join(
+                    MUTECT2_PON_DIR, "scattered", "{bam_basename}_{scatter_unit}.pon.vcf.gz"
+                ),
+                non_empty=True,
+            )
+        ),
+        tbi=temp(
+            os.path.join(MUTECT2_PON_DIR, "scattered", "{bam_basename}_{scatter_unit}.pon.vcf.gz.tbi")
+        ),
+        stats=temp(
+            os.path.join(
+                MUTECT2_PON_DIR, "scattered", "{bam_basename}_{scatter_unit}.pon.vcf.gz.stats"
+            )
+        ),
     params:
         java_opts=get_java_opts,
-        interval_arg=f"-L {TARGET_BED}" if TARGET_BED else "",
+        interval_arg=get_interval_arg,
     retries: 2
     resources:
         mem_mb=lambda wildcards, attempt: 17600 * attempt,
@@ -31,9 +44,9 @@ rule pon_mutect2:
     conda:
         "../envs/gatk.yaml"
     log:
-        os.path.join(LOG_DIR, "pon_mutect2/{bam_basename}.log"),
+        os.path.join(LOG_DIR, "pon_mutect2/{bam_basename}_{scatter_unit}.log"),
     benchmark:
-        os.path.join(LOG_DIR, "benchmarks/pon_mutect2/{bam_basename}.tsv")
+        os.path.join(LOG_DIR, "benchmarks/pon_mutect2/{bam_basename}_{scatter_unit}.tsv")
     shell:
         r"""
         gatk --java-options '{params.java_opts}' Mutect2 \
@@ -44,6 +57,43 @@ rule pon_mutect2:
             {params.interval_arg} \
             -O {output.vcf} \
             2> {log}
+        """
+
+
+rule pon_gather_vcfs:
+    """Gather one normal's scattered PoN calls (SCATTER_UNITS order) into a single VCF."""
+    input:
+        vcfs=lambda wc: [
+            os.path.join(MUTECT2_PON_DIR, "scattered", f"{wc.bam_basename}_{unit}.pon.vcf.gz")
+            for unit in SCATTER_UNITS
+        ],
+    output:
+        vcf=os.path.join(MUTECT2_PON_DIR, "{bam_basename}.pon.vcf.gz"),
+        tbi=os.path.join(MUTECT2_PON_DIR, "{bam_basename}.pon.vcf.gz.tbi"),
+    params:
+        input_args=lambda wc: " ".join(
+            f"-I {MUTECT2_PON_DIR}/scattered/{wc.bam_basename}_{unit}.pon.vcf.gz"
+            for unit in SCATTER_UNITS
+        ),
+        java_opts=get_java_opts,
+    retries: 2
+    resources:
+        mem_mb=lambda wildcards, attempt: 4000 * attempt,
+        runtime=lambda wildcards, attempt: 120 * attempt,
+    conda:
+        "../envs/gatk.yaml"
+    log:
+        os.path.join(LOG_DIR, "pon_gather_vcfs/{bam_basename}.log"),
+    benchmark:
+        os.path.join(LOG_DIR, "benchmarks/pon_gather_vcfs/{bam_basename}.tsv")
+    shell:
+        r"""
+        gatk --java-options '{params.java_opts}' GatherVcfs \
+            {params.input_args} \
+            -O {output.vcf} \
+            2> {log}
+
+        tabix -p vcf {output.vcf}
         """
 
 
