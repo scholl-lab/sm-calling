@@ -64,7 +64,8 @@ rule multiqc:
         stats=get_qc_inputs(),
     output:
         html=os.path.join(QC_DIR, "multiqc_report.html"),
-        data=directory(os.path.join(QC_DIR, "multiqc_data")),
+        # --filename multiqc_report.html makes MultiQC name its data dir multiqc_report_data
+        data=directory(os.path.join(QC_DIR, "multiqc_report_data")),
     conda:
         "../envs/multiqc.yaml"
     log:
