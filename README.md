@@ -479,7 +479,7 @@ BAM files + Mutect2 VCFs
 | Conda env | Tools | Used by |
 |-----------|-------|---------|
 | `workflow/envs/gatk.yaml` | gatk4 4.6.1.0, samtools 1.21 | Mutect2 pipeline |
-| `workflow/envs/freebayes.yaml` | freebayes 1.3.10, vcflib 1.0.15, htslib 1.21 | FreeBayes calling |
+| `workflow/envs/freebayes.yaml` | freebayes 1.3.10, vcflib 1.0.15, htslib 1.24 | FreeBayes calling |
 | `workflow/envs/bcftools.yaml` | bcftools 1.21, htslib 1.21 | VCF merge + normalize, bcftools stats |
 | `workflow/envs/multiqc.yaml` | MultiQC 1.27 | QC report aggregation |
 | `workflow/envs/purecn.yaml` | PureCN 2.12.0, r-optparse 1.7.5 | Copy number analysis |
